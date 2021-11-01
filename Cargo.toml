@@ -1,0 +1,22 @@
+[workspace]
+members = ['.', 'llua-dyn']
+
+[package]
+name = "llua"
+version = "0.1.0"
+edition = "2018"
+authors = ["metaworm <metaworm@outlook.com>"]
+
+[features]
+default = ['std']
+std = ['c_str_macro', 'bitflags', 'corepack/std']
+
+[dependencies]
+cfg-if = '1.0'
+derive_more = '0.99.11'
+bitflags = {version = '0.1', optional = true}
+libc = {version = '0.2', default-features = false}
+c_str_macro = {version = '1.0.2', optional = true}
+serde = {version = '1.0', default-features = false, features = ['rc', 'derive']}
+corepack = {version = '0.4.1', default-features = false, features = ['alloc']}
+cstrptr = {git = 'https://github.com/metaworm/cstrptr-rs', default-features = false, features = ['alloc']}
