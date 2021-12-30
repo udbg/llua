@@ -221,7 +221,7 @@ pub unsafe fn lua_pcall(L: *mut lua_State, n: c_int, r: c_int, f: c_int) -> c_in
 // coroutine functions
 extern {
     pub fn lua_yieldk(L: *mut lua_State, nresults: c_int, ctx: lua_KContext, k: lua_KFunction) -> c_int;
-    pub fn lua_resume(L: *mut lua_State, from: *mut lua_State, narg: c_int) -> c_int;
+    pub fn lua_resume(L: *mut lua_State, from: *mut lua_State, narg: c_int, nresults: *mut c_int) -> c_int;
     pub fn lua_status(L: *mut lua_State) -> c_int;
     pub fn lua_isyieldable(L: *mut lua_State) -> c_int;
 }

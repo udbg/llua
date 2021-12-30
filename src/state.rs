@@ -818,9 +818,9 @@ impl State {
     // Coroutine functions
     //===========================================================================
     /// Maps to `lua_resume`.
-    pub fn resume(&self, from: Option<State>, nargs: c_int) -> ThreadStatus {
+    pub fn resume(&self, from: Option<&State>, nargs: c_int, nresults: &mut c_int) -> ThreadStatus {
         let from_ptr = from.map(|s| s.0).unwrap_or(ptr::null_mut());
-        let result = unsafe { lua_resume(self.0, from_ptr, nargs) };
+        let result = unsafe { lua_resume(self.0, from_ptr, nargs, nresults) };
         ThreadStatus::from_c_int(result)
     }
 
