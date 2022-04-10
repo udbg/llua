@@ -1,8 +1,6 @@
 #![no_std]
 #![feature(const_type_name)]
 #![feature(specialization)]
-#![feature(const_fn_trait_bound)]
-#![feature(const_fn_fn_ptr_basics)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(unused_imports)]
@@ -15,14 +13,16 @@
 
 extern crate alloc;
 
-#[macro_use] extern crate cfg_if;
-#[macro_use] extern crate derive_more;
+#[macro_use]
+extern crate cfg_if;
+#[macro_use]
+extern crate derive_more;
 
-use alloc::string::*;
-use alloc::vec::Vec;
-use alloc::vec;
 use alloc::borrow::*;
 use alloc::boxed::*;
+use alloc::string::*;
+use alloc::vec;
+use alloc::vec::Vec;
 
 cfg_if! {
     if #[cfg(feature = "std")] {
@@ -38,17 +38,17 @@ cfg_if! {
 pub mod ffi;
 pub mod lserde;
 
-mod util;
-mod state;
-mod luaconf;
 mod convert;
-mod value;
 mod lmacro;
+mod luaconf;
+mod state;
 #[cfg(feature = "std")]
 pub mod stdconv;
+mod util;
+mod value;
 
-pub use util::*;
-pub use state::*;
-pub use value::*;
-pub use lmacro::*;
 pub use convert::*;
+pub use lmacro::*;
+pub use state::*;
+pub use util::*;
+pub use value::*;

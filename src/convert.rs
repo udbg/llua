@@ -1,12 +1,11 @@
-
 use super::*;
 
 use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number};
-use libc::c_int;
-use core::mem;
+use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::marker::PhantomData;
-use alloc::sync::Arc;
+use core::mem;
+use libc::c_int;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CRegRef(pub i32);
@@ -14,9 +13,9 @@ pub struct NilVal;
 pub struct AnyVal;
 pub struct TopVal;
 pub struct StrictBool(pub bool);
-pub struct IterVec<T: ToLua, I: Iterator<Item=T>>(pub I);
-pub struct IterMap<K: ToLua, V: ToLua, I: Iterator<Item=(K,V)>>(pub I);
-pub struct BoxIter<'a, T>(pub Box::<dyn Iterator<Item = T> + 'a>);
+pub struct IterVec<T: ToLua, I: Iterator<Item = T>>(pub I);
+pub struct IterMap<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>>(pub I);
+pub struct BoxIter<'a, T>(pub Box<dyn Iterator<Item = T> + 'a>);
 // pub struct RsClosure<T, O, F>(pub F, PhantomData<T>, PhantomData<O>);
 pub struct RsFn<THIS, T, O, F>(pub F, PhantomData<(THIS, T, O)>);
 pub struct UserDataWrapper<T>(pub T, pub Option<InitMetatable>);
@@ -64,11 +63,20 @@ pub trait UserData: Sized {
         1
     }
 
+    unsafe extern "C" fn __tostring(l: *mut lua_State) -> c_int
+    where
+        Self: ToString,
+    {
+        0
+    }
+
     unsafe extern "C" fn index_getter(l: *mut lua_State) -> c_int {
         let s = State::from_ptr(l);
         let t = s.get_metatable_by(1, s.val(2));
         if t.is_none_or_nil() {
-            if t == Type::Nil { s.pop(2); }
+            if t == Type::Nil {
+                s.pop(2);
+            }
             if let Some(getter) = Self::GETTER {
                 return getter(l);
             }
@@ -157,11 +165,9 @@ impl<'a, THIS: 'a, T, O, F: LuaFn<'a, THIS, T, O>> RsFn<THIS, T, O, F> {
 }
 
 impl<'a, T, O, F: LuaFn<'a, (), T, O>> RsFn<(), T, O, F> {
-    pub const fn new(f: F) -> Self { Self(f, PhantomData) }
-}
-
-pub trait LuaFn2<THIS, ARGS, RET> {
-    unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int;
+    pub const fn new(f: F) -> Self {
+        Self(f, PhantomData)
+    }
 }
 
 /// Trait for types that can be pushed onto the stack of a Lua s.
@@ -189,7 +195,7 @@ impl<'a> ToLua for &'a str {
     }
 }
 
-#[cfg(feature="std")]
+#[cfg(feature = "std")]
 impl<'a> ToLua for &'a std::ffi::OsStr {
     #[inline(always)]
     fn to_lua(self, s: &State) {
@@ -231,8 +237,7 @@ impl ToLua for TopVal {
     const IS_TOP: bool = true;
 
     #[inline(always)]
-    fn to_lua(self, _: &State) {
-    }
+    fn to_lua(self, _: &State) {}
 }
 
 impl ToLua for InitMetatable {
@@ -249,20 +254,25 @@ impl<T> ToLua for UserDataWrapper<T> {
     }
 }
 
-impl<T: ToLua, I: Iterator<Item=T>> ToLua for IterVec<T, I> {
+impl<T: ToLua, I: Iterator<Item = T>> ToLua for IterVec<T, I> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
         let r = s.table(self.0.size_hint().0 as _, 0);
         let mut i = 1;
-        for e in self.0.into_iter() { r.seti(i, e); i += 1; }
+        for e in self.0.into_iter() {
+            r.seti(i, e);
+            i += 1;
+        }
     }
 }
 
-impl<K: ToLua, V: ToLua, I: Iterator<Item=(K,V)>> ToLua for IterMap<K, V, I> {
+impl<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>> ToLua for IterMap<K, V, I> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
         let r = s.table(0, self.0.size_hint().0 as i32);
-        for (k, v) in self.0 { r.set(k, v); }
+        for (k, v) in self.0 {
+            r.set(k, v);
+        }
     }
 }
 
@@ -271,7 +281,11 @@ impl<'a, T: ToLuaMulti> BoxIter<'a, T> {
         let s = State::from_ptr(l);
         let p = s.to_userdata(ffi::lua_upvalueindex(1));
         let iter: &mut BoxIter<'a, T> = mem::transmute(p);
-        if let Some(v) = iter.0.next() { s.pushx(v) } else { 0 }
+        if let Some(v) = iter.0.next() {
+            s.pushx(v)
+        } else {
+            0
+        }
     }
 }
 
@@ -292,9 +306,7 @@ impl<'a, THIS, T, O, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, T, O, F> {
         }
         if core::mem::size_of::<Self>() == core::mem::size_of::<usize>() {
             let pfptr = &self;
-            s.push_light_userdata(unsafe {
-                *mem::transmute::<_, *const *mut ()>(pfptr)
-            });
+            s.push_light_userdata(unsafe { *mem::transmute::<_, *const *mut ()>(pfptr) });
         } else {
             // TODO: metatable __gc
             s.push_userdatauv(self, 0);
@@ -319,7 +331,9 @@ impl ToLua for fn(State) -> i32 {
 
 impl ToLua for NilVal {
     #[inline(always)]
-    fn to_lua(self, s: &State) { s.push_nil(); }
+    fn to_lua(self, s: &State) {
+        s.push_nil();
+    }
 }
 
 impl ToLua for CRegRef {
@@ -369,7 +383,7 @@ impl<T: ToLua> ToLua for Option<T> {
     default fn to_lua(self, s: &State) {
         match self {
             Some(value) => value.to_lua(s),
-            None        => s.push_nil(),
+            None => s.push_nil(),
         }
     }
 }
@@ -407,7 +421,9 @@ impl FromLua for AnyVal {
         Some(AnyVal)
     }
     #[inline(always)]
-    fn check(_s: &State, _i: Index) -> Self { AnyVal }
+    fn check(_s: &State, _i: Index) -> Self {
+        AnyVal
+    }
 }
 
 impl FromLua for String {
@@ -433,7 +449,9 @@ impl FromLua for Vec<u8> {
 
 impl FromLua for Value {
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<Value> { Some(s.value(i)) }
+    fn from_lua(s: &State, i: Index) -> Option<Value> {
+        Some(s.value(i))
+    }
 }
 
 impl<'a> FromLua for &'a [u8] {
@@ -441,7 +459,14 @@ impl<'a> FromLua for &'a [u8] {
     fn from_lua(s: &State, i: Index) -> Option<&'a [u8]> {
         s.to_bytes(i).or_else(|| unsafe {
             let p = s.to_userdata(i);
-            if p.is_null() { None } else { Some(core::slice::from_raw_parts(p.cast::<u8>(), s.raw_len(i) as _)) }
+            if p.is_null() {
+                None
+            } else {
+                Some(core::slice::from_raw_parts(
+                    p.cast::<u8>(),
+                    s.raw_len(i) as _,
+                ))
+            }
         })
     }
 }
@@ -501,7 +526,9 @@ impl FromLua for StrictBool {
     fn from_lua(s: &State, i: Index) -> Option<StrictBool> {
         if s.is_bool(i) {
             Some(StrictBool(s.to_bool(i)))
-        } else { None }
+        } else {
+            None
+        }
     }
 }
 
@@ -520,7 +547,9 @@ impl FromLua for LuaInt {
             Some(Self(s.to_integer(i) as usize))
         } else if s.is_number(i) {
             Some(Self(s.to_number(i) as usize))
-        } else { None }
+        } else {
+            None
+        }
     }
 }
 
@@ -555,17 +584,23 @@ pub trait ToLuaMulti: Sized {
 
 pub trait FromLuaMulti: Sized {
     const COUNT: usize = 0;
-    fn from_lua(_s: &State, _begin: Index) -> Option<Self> { None }
+    fn from_lua(_s: &State, _begin: Index) -> Option<Self> {
+        None
+    }
 }
 
 impl FromLuaMulti for () {
     const COUNT: usize = 0;
-    fn from_lua(_s: &State, _begin: Index) -> Option<Self> { Some(()) }
+    fn from_lua(_s: &State, _begin: Index) -> Option<Self> {
+        Some(())
+    }
 }
 
 impl ToLuaMulti for () {
     #[inline(always)]
-    default fn to_lua(self, s: &State) -> c_int { 0 }
+    default fn to_lua(self, s: &State) -> c_int {
+        0
+    }
 }
 
 // impl<T: ToLuaMulti> ToLuaMulti for Option<T> {
@@ -581,13 +616,16 @@ impl ToLuaMulti for () {
 impl<T: ToLua> ToLuaMulti for T {
     #[inline(always)]
     default fn to_lua(self, s: &State) -> c_int {
-        ToLua::to_lua(self, s); 1
+        ToLua::to_lua(self, s);
+        1
     }
 }
 
 impl ToLuaMulti for Pushed {
     #[inline(always)]
-    fn to_lua(self, s: &State) -> c_int { self.0 }
+    fn to_lua(self, s: &State) -> c_int {
+        self.0
+    }
 }
 
 impl ToLuaMulti for Option<Pushed> {
@@ -595,7 +633,7 @@ impl ToLuaMulti for Option<Pushed> {
     fn to_lua(self, s: &State) -> c_int {
         match self {
             Some(val) => val.to_lua(s),
-            None        => 0,
+            None => 0,
         }
     }
 }
@@ -614,13 +652,15 @@ impl<T: ToLuaMulti, E: Debug> ToLuaMulti for Result<T, E> {
     fn to_lua(self, s: &State) -> c_int {
         match self {
             Ok(val) => val.to_lua(s),
-            Err(e)  => s.raise_error(e),
+            Err(e) => s.raise_error(e),
         }
     }
 }
 
 macro_rules! replace_expr {
-    ($_t:tt $sub:expr) => {$sub};
+    ($_t:tt $sub:expr) => {
+        $sub
+    };
 }
 
 macro_rules! count_tts {
@@ -658,19 +698,19 @@ macro_rules! impl_tuple {
     );
 }
 
-impl_tuple!((A,0));
-impl_tuple!((A,0) (B,1));
-impl_tuple!((A,0) (B,1) (C,2));
-impl_tuple!((A,0) (B,1) (C,2) (D,3));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10) (L,11));
-impl_tuple!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10) (L,11) (M,12));
+impl_tuple!((A, 0));
+impl_tuple!((A, 0)(B, 1));
+impl_tuple!((A, 0)(B, 1)(C, 2));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11));
+impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11)(M, 12));
 
 macro_rules! getfn {
     ($s:ident, $f:ident) => {
@@ -727,23 +767,34 @@ macro_rules! impl_luafn {
                 s.pushx(f(this.as_ref(), $($x::check(&s, 2 + $i),)*))
             }
         }
+
+        #[allow(unused_parens)]
+        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua,)* RET: ToLuaMulti> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                let s = State::from_ptr(l);
+                let f: &Self;
+                getfn!(s, f);
+                let this = <&mut THIS as FromLua>::check(&s, 1);
+                s.pushx(f(this.as_mut(), $($x::check(&s, 2 + $i),)*))
+            }
+        }
     );
 }
 
 impl_luafn!();
-impl_luafn!((A,0));
-impl_luafn!((A,0) (B,1));
-impl_luafn!((A,0) (B,1) (C,2));
-impl_luafn!((A,0) (B,1) (C,2) (D,3));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10) (L,11));
-impl_luafn!((A,0) (B,1) (C,2) (D,3) (E,4) (F,5) (G,6) (H,7) (I,8) (J,9) (K,10) (L,11) (M,12));
+impl_luafn!((A, 0));
+impl_luafn!((A, 0)(B, 1));
+impl_luafn!((A, 0)(B, 1)(C, 2));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11));
+impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11)(M, 12));
 
 impl State {
     #[inline(always)]
@@ -754,22 +805,57 @@ impl State {
 
 impl ValRef<'_> {
     #[inline(always)]
-    pub fn register_fn<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS, RET>(&self, k: K, v: V) {
+    pub fn register_fn<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS, RET>(
+        &self,
+        k: K,
+        v: V,
+    ) -> &Self {
         self.push(k);
         self.push(RsFn::new(v));
         self.set_table(self.index);
+        self
     }
 }
 
 pub struct MethodRegistry<'a, T, D: ?Sized>(ValRef<'a>, PhantomData<(T, D)>);
 
-impl<'a, 'b, T: AsRef<D>+'b, D> MethodRegistry<'a, T, D> where D: ?Sized + 'b {
+impl<'a, 'b, T: AsRef<D> + 'b, D> MethodRegistry<'a, T, D>
+where
+    D: ?Sized + 'b,
+{
     pub fn new(mt: &'a ValRef) -> MethodRegistry<'a, T, D> {
         Self(*mt, PhantomData)
     }
 
     #[inline]
-    pub fn register<K, V, ARGS, RET>(&self, k: K, v: V) -> &Self where K: ToLua, V: LuaFn<'b, (T, &'b D), ARGS, RET> {
+    pub fn register<K, V, ARGS, RET>(&self, k: K, v: V) -> &Self
+    where
+        K: ToLua,
+        V: LuaFn<'b, (T, &'b D), ARGS, RET>,
+    {
+        self.0.push(k);
+        self.0.push(RsFn(v, PhantomData));
+        self.0.set_table(self.0.index);
+        self
+    }
+}
+
+pub struct MethodRegistryMut<'a, T, D: ?Sized>(ValRef<'a>, PhantomData<(T, D)>);
+
+impl<'a, 'b, T: AsMut<D> + 'b, D> MethodRegistryMut<'a, T, D>
+where
+    D: ?Sized + 'b,
+{
+    pub fn new(mt: &'a ValRef) -> MethodRegistryMut<'a, T, D> {
+        Self(*mt, PhantomData)
+    }
+
+    #[inline]
+    pub fn register<K, V, ARGS, RET>(&self, k: K, v: V) -> &Self
+    where
+        K: ToLua,
+        V: LuaFn<'b, (T, &'b mut D), ARGS, RET>,
+    {
         self.0.push(k);
         self.0.push(RsFn(v, PhantomData));
         self.0.set_table(self.0.index);

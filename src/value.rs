@@ -1,13 +1,9 @@
-
 use super::*;
 
 use core::ops::Deref;
 
 pub use crate::ffi::{
-    lua_Number, lua_Integer,
-    CFunction, lua_CFunction,
-    lua_Alloc, lua_Hook,
-    LUA_REGISTRYINDEX,
+    lua_Alloc, lua_CFunction, lua_Hook, lua_Integer, lua_Number, CFunction, LUA_REGISTRYINDEX,
 };
 pub type Index = i32;
 
@@ -15,31 +11,46 @@ pub type Index = i32;
 pub struct ValRef<'a> {
     #[deref]
     pub state: &'a State,
-    pub index: Index
+    pub index: Index,
 }
 
 impl<'a> ValRef<'a> {
     pub fn new(state: &'a State, index: Index) -> Self {
-        ValRef { state, index: state.abs_index(index) }
+        ValRef {
+            state,
+            index: state.abs_index(index),
+        }
     }
 
     #[inline]
-    pub fn is_nil(&self) -> bool { self.state.is_nil(self.index) }
+    pub fn is_nil(&self) -> bool {
+        self.state.is_nil(self.index)
+    }
 
     #[inline]
-    pub fn is_integer(&self) -> bool { self.state.is_integer(self.index) }
+    pub fn is_integer(&self) -> bool {
+        self.state.is_integer(self.index)
+    }
 
     #[inline]
-    pub fn to_bool(&self) -> bool { self.state.to_bool(self.index) }
+    pub fn to_bool(&self) -> bool {
+        self.state.to_bool(self.index)
+    }
 
     #[inline]
-    pub fn check_type(&self, ty: Type) { self.state.check_type(self.index, ty); }
+    pub fn check_type(&self, ty: Type) {
+        self.state.check_type(self.index, ty);
+    }
 
     #[inline]
-    pub fn cast<T: FromLua>(&self) -> Option<T> { self.state.arg(self.index) }
+    pub fn cast<T: FromLua>(&self) -> Option<T> {
+        self.state.arg(self.index)
+    }
 
     #[inline]
-    pub fn check_cast<T: FromLua>(&self) -> T { T::check(self.state, self.index) }
+    pub fn check_cast<T: FromLua>(&self) -> T {
+        T::check(self.state, self.index)
+    }
 
     pub fn geti(&self, i: impl Into<lua_Integer>) -> ValRef {
         self.state.geti(self.index, i.into());
@@ -123,7 +134,8 @@ impl<'a> ValRef<'a> {
     pub fn getopt<K: ToLua, V: FromLua>(&self, k: K) -> Option<V> {
         self.get(k);
         let res = V::from_lua(self.state, -1);
-        self.pop(1); res
+        self.pop(1);
+        res
     }
 }
 
@@ -141,12 +153,6 @@ impl Coroutine {
         assert!(s.type_of(-1) == Type::Thread);
         s.raw_setp(LUA_REGISTRYINDEX, ns.as_ptr());
         Coroutine(ns)
-    }
-
-    #[inline(always)]
-    pub fn balance_call<T: ToLuaMulti + Copy, R: FromLuaMulti>(&self, args: T) -> Result<R, String> {
-        self.push_value(1);
-        self.balance_with(|s| s.pcall_trace::<T, R>(args).map_err(|e| e.to_string()))
     }
 }
 

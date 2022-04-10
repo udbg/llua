@@ -1,7 +1,7 @@
-
 use super::*;
 
-use crate::{FromLua, State, ToLua, Type, ValRef, ffi::*};
+use crate::{ffi::*, FromLua, State, ToLua, Type, ValRef};
+use alloc::fmt::{self, Display};
 use serde::{
     de::{
         Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor,
@@ -12,11 +12,10 @@ use serde::{
         Serializer,
     },
 };
-use alloc::fmt::{self, Display};
 
 #[derive(Clone, Debug, PartialEq, Display)]
 pub enum DesErr {
-        // One or more variants that can be created by data structures through the
+    // One or more variants that can be created by data structures through the
     // `ser::Error` and `de::Error` traits. For example the Serialize impl for
     // Mutex<T> might return an error because the mutex is poisoned, or the
     // Deserialize impl for a struct may return an error because a required
@@ -440,87 +439,132 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// `Deserializer::deserialize_any` means your data type will be able to
     /// deserialize from self-describing formats only, ruling out Bincode and
     /// many others.
-    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         match self.state.type_of(self.index) {
-            Type::Number => if self.state.is_integer(self.index) {
-                visitor.visit_i64(self.state.to_integer(self.index))
-            } else {
-                visitor.visit_f64(self.state.to_number(self.index))
+            Type::Number => {
+                if self.state.is_integer(self.index) {
+                    visitor.visit_i64(self.state.to_integer(self.index))
+                } else {
+                    visitor.visit_f64(self.state.to_number(self.index))
+                }
             }
             Type::String => self.deserialize_str(visitor),
             Type::Boolean => self.deserialize_bool(visitor),
-            Type::Table => if self.state.raw_len(self.index) > 0 {
-                self.deserialize_seq(visitor)
-            } else {
-                self.deserialize_map(visitor)
+            Type::Table => {
+                if self.state.raw_len(self.index) > 0 {
+                    self.deserialize_seq(visitor)
+                } else {
+                    self.deserialize_map(visitor)
+                }
             }
             _ => visitor.visit_unit(),
         }
     }
 
     /// Hint that the `Deserialize` type is expecting a `bool` value.
-    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_bool(self.state.to_bool(self.index))
     }
 
     /// Hint that the `Deserialize` type is expecting an `i8` value.
-    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_i8(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting an `i16` value.
-    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_i16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_i16(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting an `i32` value.
-    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_i32(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting an `i64` value.
-    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_i64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_i64(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `u8` value.
-    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_u8<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_u8(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `u16` value.
-    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_u16<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_u16(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `u32` value.
-    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_u32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_u32(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `u64` value.
-    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_u64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_u64(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `f32` value.
-    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_f32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_f32(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `f64` value.
-    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_f64<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_f64(self.state.arg(self.index).ok_or(DesErr::ExpectedInteger)?)
     }
 
     /// Hint that the `Deserialize` type is expecting a `char` value.
-    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_char<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         match self.state.type_of(self.index) {
             Type::Number => visitor.visit_char(self.state.to_integer(self.index) as u8 as _),
             Type::String => {
                 let s = self.state.to_str(self.index).unwrap();
                 visitor.visit_char(
-                    s.chars().next().ok_or(DesErr::Message("empty char".into()))?
+                    s.chars()
+                        .next()
+                        .ok_or(DesErr::Message("empty char".into()))?,
                 )
             }
             _ => Err(DesErr::Message("invalid char type".into())),
@@ -534,8 +578,15 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// If the `Visitor` would benefit from taking ownership of `String` data,
     /// indiciate this to the `Deserializer` by using `deserialize_string`
     /// instead.
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-        visitor.visit_borrowed_str(self.state.to_str(self.index).ok_or(DesErr::ExpectedString)?)
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_borrowed_str(
+            self.state
+                .to_str(self.index)
+                .ok_or(DesErr::ExpectedString)?,
+        )
     }
 
     /// Hint that the `Deserialize` type is expecting a string value and would
@@ -545,7 +596,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// If the `Visitor` would not benefit from taking ownership of `String`
     /// data, indicate that to the `Deserializer` by using `deserialize_str`
     /// instead.
-    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_str(visitor)
     }
 
@@ -556,8 +610,15 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// If the `Visitor` would benefit from taking ownership of `Vec<u8>` data,
     /// indicate this to the `Deserializer` by using `deserialize_byte_buf`
     /// instead.
-    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
-        visitor.visit_borrowed_bytes(self.state.to_bytes(self.index).ok_or(DesErr::ExpectedString)?)
+    fn deserialize_bytes<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        visitor.visit_borrowed_bytes(
+            self.state
+                .to_bytes(self.index)
+                .ok_or(DesErr::ExpectedString)?,
+        )
     }
 
     /// Hint that the `Deserialize` type is expecting a byte array and would
@@ -567,7 +628,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// If the `Visitor` would not benefit from taking ownership of `Vec<u8>`
     /// data, indicate that to the `Deserializer` by using `deserialize_bytes`
     /// instead.
-    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_byte_buf<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_bytes(visitor)
     }
 
@@ -576,7 +640,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// This allows deserializers that encode an optional value as a nullable
     /// value to convert the null value into `None` and a regular value into
     /// `Some(value)`.
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         if self.state.is_none_or_nil(self.index) {
             visitor.visit_none()
         } else {
@@ -585,7 +652,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     }
 
     /// Hint that the `Deserialize` type is expecting a unit value.
-    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_unit<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         if self.state.is_none_or_nil(self.index) {
             visitor.visit_unit()
         } else {
@@ -599,7 +669,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
         self,
         name: &'static str,
         visitor: V,
-    ) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_unit(visitor)
     }
 
@@ -609,12 +682,18 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
         self,
         name: &'static str,
         visitor: V,
-    ) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         visitor.visit_newtype_struct(self)
     }
 
     /// Hint that the `Deserialize` type is expecting a sequence of values.
-    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_seq<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         struct SeqDes<'a>(ValRef<'a>, usize, usize);
 
         impl<'de> SeqAccess<'de> for SeqDes<'_> {
@@ -625,7 +704,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
                 Some(self.0.state.raw_len(self.0.index))
             }
 
-            fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> where T: DeserializeSeed<'de> {
+            fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+            where
+                T: DeserializeSeed<'de>,
+            {
                 if self.1 > self.2 {
                     return Ok(None);
                 }
@@ -646,7 +728,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
 
     /// Hint that the `Deserialize` type is expecting a sequence of values and
     /// knows how many values there are without looking at the serialized data.
-    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_tuple<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_seq(visitor)
     }
 
@@ -657,16 +742,25 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
         name: &'static str,
         len: usize,
         visitor: V,
-    ) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_seq(visitor)
     }
 
     /// Hint that the `Deserialize` type is expecting a map of key-value pairs.
-    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_map<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         impl<'de> MapAccess<'de> for ValRef<'_> {
             type Error = DesErr;
 
-            fn next_key_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error> where T: DeserializeSeed<'de> {
+            fn next_key_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
+            where
+                T: DeserializeSeed<'de>,
+            {
                 if self.state.next(self.index) {
                     Ok(Some(seed.deserialize(self.state.val(-2))?))
                 } else {
@@ -674,7 +768,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
                 }
             }
 
-            fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error> where V: DeserializeSeed<'de> {
+            fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
+            where
+                V: DeserializeSeed<'de>,
+            {
                 let r = seed.deserialize(self.state.val(-1))?;
                 self.state.pop(1);
                 Ok(r)
@@ -697,7 +794,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
         name: &'static str,
         fields: &'static [&'static str],
         visitor: V,
-    ) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_map(visitor)
     }
 
@@ -708,13 +808,19 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
         name: &'static str,
         variants: &'static [&'static str],
         visitor: V,
-    ) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         unimplemented!()
     }
 
     /// Hint that the `Deserialize` type is expecting the name of a struct
     /// field or the discriminant of an enum variant.
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_str(visitor)
     }
 
@@ -722,7 +828,10 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     /// doesn't matter because it is ignored.
     ///
     /// Deserializers for non-self-describing formats may not support this mode.
-    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error> where V: Visitor<'de> {
+    fn deserialize_ignored_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
         self.deserialize_any(visitor)
     }
 }
@@ -794,7 +903,10 @@ impl<'de> Visitor<'de> for LuaVisitor<'_> {
         Ok(())
     }
 
-    fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error> where A: SeqAccess<'de> {
+    fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
         let size = seq.size_hint();
         self.0.create_table(size.unwrap_or_default() as _, 0);
 
@@ -815,7 +927,10 @@ impl<'de> Visitor<'de> for LuaVisitor<'_> {
         Ok(())
     }
 
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error> where A: MapAccess<'de> {
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
         let size = map.size_hint();
         self.0.create_table(0, size.unwrap_or_default() as _);
 
@@ -844,40 +959,55 @@ impl Serialize for ValRef<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         unsafe {
             match lua_type(self.state.as_ptr(), self.index) {
-                LUA_TSTRING => serializer.serialize_bytes(self.to_bytes(self.index).unwrap_or_default()),
+                LUA_TSTRING => {
+                    let bytes = self.to_bytes(self.index).unwrap_or_default();
+                    // TODO:
+                    if bytes.len() > 300 {
+                        serializer.serialize_bytes(bytes)
+                    } else {
+                        match std::str::from_utf8(bytes) {
+                            Ok(s) => serializer.serialize_str(s),
+                            Err(_) => serializer.serialize_bytes(bytes),
+                        }
+                    }
+                }
                 // LUA_TSTRING => serializer.serialize_str(self.to_str(self.index).unwrap_or_default()),
-                LUA_TNUMBER => if self.is_integer() {
-                    serializer.serialize_i64(self.to_integer(self.index))
-                } else {
-                    serializer.serialize_f64(self.to_number(self.index))
+                LUA_TNUMBER => {
+                    if self.is_integer() {
+                        serializer.serialize_i64(self.to_integer(self.index))
+                    } else {
+                        serializer.serialize_f64(self.to_number(self.index))
+                    }
                 }
                 LUA_TFUNCTION => serializer.serialize_bool(true),
                 LUA_TBOOLEAN => serializer.serialize_bool(self.to_bool()),
-                LUA_TTABLE => if self.raw_len(self.index) > 0 {
-                    let len = self.raw_len(self.index) as usize;
-                    let mut seq = serializer.serialize_seq(Some(len))?;
-                    for i in 1..=len {
-                        self.raw_geti(self.index, i as lua_Integer);
-                        seq.serialize_element(&self.val(-1))?;
-                        self.pop(1);
+                LUA_TTABLE => {
+                    if self.raw_len(self.index) > 0 {
+                        let len = self.raw_len(self.index) as usize;
+                        let mut seq = serializer.serialize_seq(Some(len))?;
+                        for i in 1..=len {
+                            self.raw_geti(self.index, i as lua_Integer);
+                            seq.serialize_element(&self.val(-1))?;
+                            self.pop(1);
+                        }
+                        seq.end()
+                    } else {
+                        // get count of entries in the table
+                        let mut count = 0usize;
+                        self.push_nil();
+                        while lua_next(self.state.as_ptr(), self.index) != 0 {
+                            count += 1;
+                            self.pop(1);
+                        }
+                        // serialize
+                        let mut map = serializer.serialize_map(Some(count))?;
+                        self.push_nil();
+                        while lua_next(self.state.as_ptr(), self.index) != 0 {
+                            if let Err(_) = map.serialize_entry(&self.val(-2), &self.val(-1)) {}
+                            self.pop(1);
+                        }
+                        map.end()
                     }
-                    seq.end()
-                } else {
-                    // get count of entries in the table
-                    let mut count = 0usize;
-                    self.push_nil();
-                    while lua_next(self.state.as_ptr(), self.index) != 0 {
-                        count += 1;
-                        self.pop(1);
-                    }
-                    // serialize
-                    let mut map = serializer.serialize_map(Some(count))?;
-                    self.push_nil();
-                    while lua_next(self.state.as_ptr(), self.index) != 0 {
-                        if let Err(_) = map.serialize_entry(&self.val(-2), &self.val(-1)) {}
-                        self.pop(1);
-                    }
-                    map.end()
                 }
                 _ => serializer.serialize_none(),
             }
