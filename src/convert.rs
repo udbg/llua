@@ -5,7 +5,9 @@ use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem;
+use core::ops::Deref;
 use libc::c_int;
+use std::process::Output;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CRegRef(pub i32);
@@ -13,6 +15,7 @@ pub struct NilVal;
 pub struct AnyVal;
 pub struct TopVal;
 pub struct StrictBool(pub bool);
+pub struct StrictInt<I>(pub I);
 pub struct IterVec<T: ToLua, I: Iterator<Item = T>>(pub I);
 pub struct IterMap<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>>(pub I);
 pub struct BoxIter<'a, T>(pub Box<dyn Iterator<Item = T> + 'a>);
@@ -24,6 +27,12 @@ pub struct Pushed(pub i32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StackRef(pub i32);
 
+impl<'a, T, I: Iterator<Item = T> + 'a> From<I> for BoxIter<'a, T> {
+    fn from(iter: I) -> Self {
+        Self(Box::new(iter))
+    }
+}
+
 impl From<i32> for Pushed {
     #[inline(always)]
     fn from(n: i32) -> Self {
@@ -34,14 +43,106 @@ impl From<i32> for Pushed {
 pub trait UserData: Sized {
     /// `__name`
     const TYPE_NAME: &'static str = core::any::type_name::<Self>();
-    /// set `__index` to metatable self
+    /// set `__index` to metatable itself
     const INDEX_SELF: bool = true;
-    /// `__len`
+    /// `__len` metamethod, if true, return the size of this userdata
     const RAW_LEN: bool = false;
 
     const INDEX_USERVALUE: bool = false;
     const GETTER: lua_CFunction = None;
     const IS_POINTER: bool = false;
+
+    /// add methods
+    fn methods(mt: &ValRef) {}
+
+    /// add fields getter
+    fn getter(fields: &ValRef) {}
+
+    /// add fields setter
+    fn setter(fields: &ValRef) {}
+
+    fn init_metatable(mt: &ValRef) {
+        mt.setf(cstr!("__name"), Self::TYPE_NAME);
+        mt.setf(cstr!("__gc"), Self::__gc as CFunction);
+
+        if Self::RAW_LEN {
+            mt.setf(cstr!("__len"), Self::__len as CFunction);
+        }
+
+        {
+            let getter = &mt.state.table(0, 0);
+            Self::getter(getter);
+            mt.state.push_cclosure(Some(Self::__index), 1);
+            mt.set("__index", TopVal);
+        }
+
+        {
+            let setter = &mt.state.table(0, 0);
+            Self::setter(setter);
+            mt.state.push_cclosure(Some(Self::__newindex), 1);
+            mt.set("__newindex", TopVal);
+        }
+        Self::methods(&mt);
+    }
+
+    unsafe extern "C" fn __index(l: *mut lua_State) -> c_int {
+        let s = State::from_ptr(l);
+
+        // access getter table
+        s.push_value(2);
+        if s.get_table(lua_upvalueindex(1)) == Type::Function {
+            s.push_value(1);
+            s.push_value(2);
+            s.call(2, 1);
+            return 1;
+        }
+
+        // access method table
+        if Self::INDEX_SELF && !s.get_metatable_by(1, s.val(2)).is_none_or_nil() {
+            return 1;
+        }
+
+        // access getter function
+        if let Some(getter) = Self::GETTER {
+            let n = getter(l);
+            if n > 0 {
+                return n;
+            }
+        }
+
+        // access user value as table
+        if Self::INDEX_USERVALUE {
+            s.get_uservalue(1);
+            s.push_value(2);
+            s.get_table(-2);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    unsafe extern "C" fn __newindex(l: *mut lua_State) -> c_int {
+        let s = State::from_ptr(l);
+
+        // access setter table
+        s.push_value(2);
+        if s.get_table(lua_upvalueindex(1)) == Type::Function {
+            s.push_value(1); // self
+            s.push_value(3); // value
+            s.push_value(2); // key
+            s.call(3, 0);
+            return 0;
+        }
+
+        // access user value as table
+        if Self::INDEX_USERVALUE {
+            s.get_uservalue(1);
+            s.push_value(2);
+            s.push_value(3);
+            s.set_table(-3);
+        }
+        return 0;
+    }
 
     unsafe extern "C" fn __gc(l: *mut lua_State) -> c_int {
         let s = State::from_ptr(l);
@@ -68,59 +169,6 @@ pub trait UserData: Sized {
         Self: ToString,
     {
         0
-    }
-
-    unsafe extern "C" fn index_getter(l: *mut lua_State) -> c_int {
-        let s = State::from_ptr(l);
-        let t = s.get_metatable_by(1, s.val(2));
-        if t.is_none_or_nil() {
-            if t == Type::Nil {
-                s.pop(2);
-            }
-            if let Some(getter) = Self::GETTER {
-                return getter(l);
-            }
-            return 0;
-        }
-        return 1;
-    }
-
-    unsafe extern "C" fn index_uservalue(l: *mut lua_State) -> c_int {
-        let s = State::from_ptr(l);
-        if s.get_metatable_by(1, s.val(2)).is_none_or_nil() {
-            s.get_uservalue(1);
-            s.push_value(2);
-            s.get_table(-2);
-        }
-        return 1;
-    }
-
-    unsafe extern "C" fn newindex_uservalue(l: *mut lua_State) -> c_int {
-        let s = State::from_ptr(l);
-        s.get_uservalue(1);
-        s.push_value(2);
-        s.push_value(3);
-        s.set_table(-3);
-        return 0;
-    }
-
-    fn methods(mt: &ValRef) {}
-
-    fn init_metatable(mt: &ValRef) {
-        mt.setf(cstr!("__name"), Self::TYPE_NAME);
-        mt.setf(cstr!("__gc"), Self::__gc as CFunction);
-        if Self::RAW_LEN {
-            mt.setf(cstr!("__len"), Self::__len as CFunction);
-        }
-        if Self::GETTER.is_some() {
-            mt.setf(cstr!("__index"), Self::index_getter as CFunction);
-        } else if Self::INDEX_USERVALUE {
-            mt.setf(cstr!("__index"), Self::index_uservalue as CFunction);
-            mt.setf(cstr!("__newindex"), Self::newindex_uservalue as CFunction);
-        } else if Self::INDEX_SELF {
-            mt.setf(cstr!("__index"), mt);
-        }
-        Self::methods(&mt);
     }
 }
 // impl<T> UserData for Arc<T> {}
@@ -539,20 +587,6 @@ impl<T: FromLua> FromLua for Option<T> {
     }
 }
 
-pub struct LuaInt(pub usize);
-
-impl FromLua for LuaInt {
-    fn from_lua(s: &State, i: Index) -> Option<Self> {
-        if s.is_integer(i) {
-            Some(Self(s.to_integer(i) as usize))
-        } else if s.is_number(i) {
-            Some(Self(s.to_number(i) as usize))
-        } else {
-            None
-        }
-    }
-}
-
 macro_rules! impl_integer {
     ($($t:ty) *) => {
         $(
@@ -566,10 +600,24 @@ macro_rules! impl_integer {
         impl FromLua for $t {
             #[inline(always)]
             fn from_lua(s: &State, i: Index) -> Option<$t> {
-                let t = unsafe { lua_type(s.as_ptr(), i) };
-                if LUA_TNUMBER == t {
+                if s.is_integer(i) {
                     Some(s.to_integer(i) as $t)
-                } else { None }
+                } else if s.is_number(i) {
+                    Some(s.to_number(i) as $t)
+                } else {
+                    None
+                }
+            }
+        }
+
+        impl FromLua for StrictInt<$t> {
+            #[inline(always)]
+            fn from_lua(s: &State, i: Index) -> Option<StrictInt<$t>> {
+                if s.is_integer(i) {
+                    Some(Self(s.to_integer(i) as $t))
+                } else {
+                    None
+                }
             }
         }
         )*
@@ -805,14 +853,12 @@ impl State {
 
 impl ValRef<'_> {
     #[inline(always)]
-    pub fn register_fn<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS, RET>(
+    pub fn register<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS, RET>(
         &self,
         k: K,
         v: V,
     ) -> &Self {
-        self.push(k);
-        self.push(RsFn::new(v));
-        self.set_table(self.index);
+        self.set(k, RsFn::new(v));
         self
     }
 }
@@ -833,9 +879,9 @@ where
         K: ToLua,
         V: LuaFn<'b, (T, &'b D), ARGS, RET>,
     {
-        self.0.push(k);
-        self.0.push(RsFn(v, PhantomData));
-        self.0.set_table(self.0.index);
+        self.0.state.push(k);
+        self.0.state.push(RsFn(v, PhantomData));
+        self.0.state.set_table(self.0.index);
         self
     }
 }
@@ -856,9 +902,9 @@ where
         K: ToLua,
         V: LuaFn<'b, (T, &'b mut D), ARGS, RET>,
     {
-        self.0.push(k);
-        self.0.push(RsFn(v, PhantomData));
-        self.0.set_table(self.0.index);
+        self.0.state.push(k);
+        self.0.state.push(RsFn(v, PhantomData));
+        self.0.state.set_table(self.0.index);
         self
     }
 }

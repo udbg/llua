@@ -1,22 +1,31 @@
-[workspace]
-members = ['.', 'llua-dyn']
-
 [package]
 name = "llua"
 version = "0.1.0"
 edition = "2018"
+license = "MIT"
 authors = ["metaworm <metaworm@outlook.com>"]
+description = "Low level bindings to Lua5.4"
+homepage = "https://crates.io/crates/llua"
+documentation = "https://docs.rs/llua"
+repository = "https://github.com/udbg/llua"
+keywords = ["lua", "scripting", "nostd"]
+categories = ["api-bindings", "no-std"]
 
 [features]
 default = ['std']
+vendored = ['lua-src']
 std = ['c_str_macro', 'bitflags', 'corepack/std']
 
 [dependencies]
 cfg-if = '1.0'
+glob = '0.3'
 derive_more = '0.99.11'
-bitflags = {version = '0.1', optional = true}
+bitflags = {version = '1.3.2', optional = true}
 libc = {version = '0.2', default-features = false}
 c_str_macro = {version = '1.0.2', optional = true}
 serde = {version = '1.0', default-features = false, features = ['rc', 'derive']}
 corepack = {version = '0.4.1', default-features = false, features = ['alloc']}
-cstrptr = {git = 'https://github.com/metaworm/cstrptr-rs', default-features = false, features = ['alloc']}
+cstrptr = {version = '0.1.2', default-features = false, features = ['alloc']}
+
+[build-dependencies]
+lua-src = {version = '544.0', features = [], optional = true}

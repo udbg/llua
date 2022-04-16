@@ -7,9 +7,8 @@ pub use crate::ffi::{
 };
 pub type Index = i32;
 
-#[derive(Clone, Copy, Deref)]
+#[derive(Clone, Copy)]
 pub struct ValRef<'a> {
-    #[deref]
     pub state: &'a State,
     pub index: Index,
 }
@@ -20,6 +19,11 @@ impl<'a> ValRef<'a> {
             state,
             index: state.abs_index(index),
         }
+    }
+
+    #[inline]
+    pub fn type_of(&self) -> Type {
+        self.state.type_of(self.index)
     }
 
     #[inline]
@@ -54,28 +58,28 @@ impl<'a> ValRef<'a> {
 
     pub fn geti(&self, i: impl Into<lua_Integer>) -> ValRef {
         self.state.geti(self.index, i.into());
-        self.val(-1)
+        self.state.val(-1)
     }
 
     pub fn seti<V: ToLua>(&self, i: impl Into<lua_Integer>, v: V) {
-        v.to_lua(self);
+        v.to_lua(self.state);
         self.state.seti(self.index, i.into());
     }
 
     pub fn getf(&self, k: &CStr) -> ValRef {
-        self.get_field(self.index, k);
-        self.val(-1)
+        self.state.get_field(self.index, k);
+        self.state.val(-1)
     }
 
     #[inline]
     pub fn rawget<K: ToLua>(&self, k: K) -> Type {
-        self.push(k);
-        self.raw_get(self.index)
+        self.state.push(k);
+        self.state.raw_get(self.index)
     }
 
     #[inline]
     pub fn rawlen(&self) -> usize {
-        self.raw_len(self.index)
+        self.state.raw_len(self.index)
     }
 
     #[inline]
@@ -85,14 +89,14 @@ impl<'a> ValRef<'a> {
 
     #[inline]
     pub fn setf<V: ToLua>(&self, k: &CStr, v: V) {
-        self.push(v);
+        self.state.push(v);
         self.set_field(k);
     }
 
     #[inline]
     pub fn getp<T>(&self, p: *const T) -> ValRef {
         self.state.raw_getp(self.index, p);
-        self.val(-1)
+        self.state.val(-1)
     }
 
     #[inline]
@@ -115,26 +119,27 @@ impl<'a> ValRef<'a> {
     #[inline]
     pub fn set<K: ToLua, V: ToLua>(&self, k: K, v: V) {
         if V::IS_TOP {
-            self.push(k);
-            self.insert(-2);
+            self.state.push(k);
+            self.state.insert(-2);
         } else {
-            self.push(k);
-            self.push(v);
+            self.state.push(k);
+            self.state.push(v);
         }
-        self.set_table(self.index);
+        self.state.set_table(self.index);
     }
 
     #[inline]
-    pub fn get<K: ToLua>(&self, k: K) {
-        self.push(k);
-        self.get_table(self.index);
+    pub fn get<K: ToLua>(&self, k: K) -> ValRef<'a> {
+        self.state.push(k);
+        self.state.get_table(self.index);
+        self.state.val(-1)
     }
 
     #[inline]
     pub fn getopt<K: ToLua, V: FromLua>(&self, k: K) -> Option<V> {
         self.get(k);
         let res = V::from_lua(self.state, -1);
-        self.pop(1);
+        self.state.pop(1);
         res
     }
 }

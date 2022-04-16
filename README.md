@@ -1,10 +1,13 @@
 
-llua is a rust binding for lua(5.4), which provides some lower-layer API, mainly used for udbg and its plugins
+llua is a rust binding for lua(5.4), which provides some lower-layer API
 
 ## Features
 
 - Serialization (serde) support
 - Rust **nostd** support
+- Not all is safe, but the binding is efficient
+- Ergonomic binding for functions and userdata methods
+- Builtin bindings to rust standard library
 
 ## Credits
 

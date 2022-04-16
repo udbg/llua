@@ -1,17 +1,16 @@
-
 use super::*;
 
+use crate::convert::{FromLua, FromLuaMulti, ToLua, ToLuaMulti};
 use crate::ffi::*;
-use crate::convert::{ToLua, FromLua, ToLuaMulti, FromLuaMulti};
 
-use core::{mem, ptr, str, slice, any};
-use core::mem::MaybeUninit;
-use core::ops::DerefMut;
-use alloc::vec::Vec;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
+use core::mem::MaybeUninit;
+use core::ops::DerefMut;
+use core::{any, mem, ptr, slice, str};
 
-use libc::{c_int, c_void, c_char, size_t};
+use libc::{c_char, c_int, c_void, size_t};
 
 pub type InitMetatable = fn(&ValRef);
 
@@ -71,28 +70,35 @@ impl ThreadStatus {
         }
     }
 
+    pub fn is_ok(self) -> bool {
+        matches!(self, Self::Ok)
+    }
+
     /// Returns `true` for error statuses and `false` for `Ok` and `Yield`.
     pub fn is_err(self) -> bool {
         match self {
-            ThreadStatus::RuntimeError |
-                ThreadStatus::SyntaxError |
-                ThreadStatus::MemoryError |
-                ThreadStatus::GcError |
-                ThreadStatus::MessageHandlerError |
-                ThreadStatus::FileError => true,
-            ThreadStatus::Ok |
-                ThreadStatus::Yield => false,
+            ThreadStatus::RuntimeError
+            | ThreadStatus::SyntaxError
+            | ThreadStatus::MemoryError
+            | ThreadStatus::GcError
+            | ThreadStatus::MessageHandlerError
+            | ThreadStatus::FileError => true,
+            ThreadStatus::Ok | ThreadStatus::Yield => false,
         }
     }
 
     pub fn chk_err(self, s: &State) {
-        if self != Self::Ok { panic!("{}", s.to_str(-1).unwrap_or("<error>")); }
+        if self != Self::Ok {
+            panic!("{}", s.to_str(-1).unwrap_or("<error>"));
+        }
     }
 
     pub fn check(self, s: &State, msg: &str) -> Result<(), String> {
         if self != Self::Ok {
             Err(format!("{}: {}", msg, s.to_str(-1).unwrap_or_default()))
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -190,7 +196,9 @@ impl Reference {
 }
 
 impl From<c_int> for Reference {
-    fn from(i: c_int) -> Self { Self(i) }
+    fn from(i: c_int) -> Self {
+        Self(i)
+    }
 }
 
 #[cfg(features = "std")]
@@ -212,6 +220,10 @@ bitflags::bitflags! {
 #[repr(C)]
 pub struct State(*mut lua_State);
 
+extern "C" {
+    fn llua_open_libs(_: &State);
+}
+
 impl State {
     /// Initializes a new Lua state. This function does not open any libraries
     /// by default. Calls `lua_newstate` internally.
@@ -222,23 +234,26 @@ impl State {
     /// Constructs a wrapper `State` from a raw pointer. This is suitable for use
     /// inside of native functions that accept a `lua_State` to obtain a wrapper.
     #[inline(always)]
-    pub unsafe fn from_ptr(L: *mut lua_State) -> State { State(L) }
+    pub unsafe fn from_ptr(L: *mut lua_State) -> State {
+        State(L)
+    }
 
     #[inline(always)]
-    pub unsafe fn copy_state(&self) -> State { State(self.as_ptr()) }
+    pub unsafe fn copy_state(&self) -> State {
+        State(self.as_ptr())
+    }
 
     /// Returns an unsafe pointer to the wrapped `lua_State`.
     #[inline(always)]
-    pub fn as_ptr(&self) -> *mut lua_State { self.0 }
+    pub fn as_ptr(&self) -> *mut lua_State {
+        self.0
+    }
 
     /// Maps to `luaL_openlibs`.
     pub fn open_libs(&self) {
-        extern "C" {
-            fn llua_open_libs(l: *mut lua_State);
-        }
         unsafe {
             luaL_openlibs(self.0);
-            llua_open_libs(self.0);
+            llua_open_libs(self);
         }
     }
 
@@ -305,18 +320,14 @@ impl State {
     /// Maps to `luaL_dofile`.
     pub fn do_file(&self, filename: &str) -> ThreadStatus {
         let c_str = CString::new(filename).unwrap();
-        let result = unsafe {
-            luaL_dofile(self.0, c_str.as_ptr())
-        };
+        let result = unsafe { luaL_dofile(self.0, c_str.as_ptr()) };
         ThreadStatus::from_c_int(result)
     }
 
     /// Maps to `luaL_dostring`.
     pub fn do_string(&self, s: &str) -> ThreadStatus {
         let c_str = CString::new(s).unwrap();
-        let result = unsafe {
-            luaL_dostring(self.0, c_str.as_ptr())
-        };
+        let result = unsafe { luaL_dostring(self.0, c_str.as_ptr()) };
         ThreadStatus::from_c_int(result)
     }
 
@@ -332,15 +343,15 @@ impl State {
     /// Maps to `lua_close`.
     #[inline(always)]
     pub fn close(self) {
-        unsafe { lua_close(self.0); }
+        unsafe {
+            lua_close(self.0);
+        }
     }
 
     /// [-0, +1, m] Maps to `lua_newthread`.
     #[inline(always)]
     pub fn new_thread(&self) -> State {
-        unsafe {
-            State::from_ptr(lua_newthread(self.0))
-        }
+        unsafe { State::from_ptr(lua_newthread(self.0)) }
     }
 
     /// Maps to `lua_atpanic`.
@@ -353,7 +364,7 @@ impl State {
     pub fn version(state: Option<&mut State>) -> lua_Number {
         let ptr = match state {
             Some(state) => state.0,
-            None        => ptr::null_mut()
+            None => ptr::null_mut(),
         };
         unsafe { *lua_version(ptr) }
     }
@@ -501,9 +512,13 @@ impl State {
     #[inline(always)]
     pub fn get_userdata_by_size<'a, T>(&'a self, index: Index) -> Option<&'a mut T> {
         unsafe {
-            if self.type_of(index) == Type::Userdata && self.raw_len(index) as usize == mem::size_of::<T>() {
+            if self.type_of(index) == Type::Userdata
+                && self.raw_len(index) as usize == mem::size_of::<T>()
+            {
                 Some(mem::transmute(self.to_userdata(index)))
-            } else { None }
+            } else {
+                None
+            }
         }
     }
 
@@ -618,9 +633,7 @@ impl State {
     /// [-0, +1, -] `lua_getglobal`.
     #[inline(always)]
     pub fn get_global(&self, name: &CStr) -> Type {
-        Type::from_c_int(unsafe {
-            lua_getglobal(self.0, name.as_ptr())
-        })
+        Type::from_c_int(unsafe { lua_getglobal(self.0, name.as_ptr()) })
     }
 
     /// Maps to `lua_gettable`.
@@ -633,9 +646,7 @@ impl State {
     /// Maps to `lua_getfield`.
     #[inline(always)]
     pub fn get_field(&self, index: Index, k: &CStr) -> Type {
-        Type::from_c_int(unsafe {
-            lua_getfield(self.0, index, k.as_ptr())
-        })
+        Type::from_c_int(unsafe { lua_getfield(self.0, index, k.as_ptr()) })
     }
 
     /// Maps to `lua_geti`.
@@ -698,7 +709,9 @@ impl State {
         if self.get_metatable(i) {
             self.push(k);
             self.raw_get(-2)
-        } else { Type::None }
+        } else {
+            Type::None
+        }
     }
 
     /// Maps to `lua_getuservalue`.
@@ -768,7 +781,9 @@ impl State {
     /// [-1, +0, -] `lua_setuservalue`.
     #[inline(always)]
     pub fn set_uservalue(&self, idx: Index) {
-        unsafe { lua_setuservalue(self.0, idx); }
+        unsafe {
+            lua_setuservalue(self.0, idx);
+        }
     }
 
     //===========================================================================
@@ -808,9 +823,7 @@ impl State {
     /// Maps to `lua_pcall`.
     #[inline(always)]
     pub fn pcall(&self, nargs: c_int, nresults: c_int, msgh: c_int) -> ThreadStatus {
-        let result = unsafe {
-            lua_pcall(self.0, nargs, nresults, msgh)
-        };
+        let result = unsafe { lua_pcall(self.0, nargs, nresults, msgh) };
         ThreadStatus::from_c_int(result)
     }
 
@@ -907,7 +920,11 @@ impl State {
     pub fn to_numberx(&self, index: Index) -> Option<lua_Number> {
         let mut suc = 0i32;
         let r = unsafe { lua_tonumberx(self.0, index, &mut suc) };
-        if suc > 0 { Some(r) } else { None }
+        if suc > 0 {
+            Some(r)
+        } else {
+            None
+        }
     }
 
     /// Maps to `lua_tointeger`.
@@ -921,7 +938,11 @@ impl State {
     pub fn to_integerx(&self, index: Index) -> Option<lua_Integer> {
         let mut isnum: c_int = 0;
         let r = unsafe { lua_tointegerx(self.0, index, &mut isnum) };
-        if isnum == 0 { None } else { Some(r) }
+        if isnum == 0 {
+            None
+        } else {
+            Some(r)
+        }
     }
 
     /// Maps to `lua_pop`.
@@ -1030,14 +1051,22 @@ impl State {
     pub fn get_stack(&self, level: c_int) -> Option<lua_Debug> {
         let mut ar: lua_Debug = unsafe { MaybeUninit::uninit().assume_init() };
         let result = unsafe { lua_getstack(self.0, level, &mut ar) };
-        if result == 1 { Some(ar) } else { None }
+        if result == 1 {
+            Some(ar)
+        } else {
+            None
+        }
     }
 
     /// Maps to `lua_getinfo`.
     pub fn get_info(&self, what: &CStr) -> Option<lua_Debug> {
         let mut ar: lua_Debug = unsafe { MaybeUninit::uninit().assume_init() };
         let result = unsafe { lua_getinfo(self.0, what.as_ptr(), &mut ar) };
-        if result == 0 { None } else { Some(ar) }
+        if result == 0 {
+            None
+        } else {
+            Some(ar)
+        }
     }
 
     /// Maps to `lua_getlocal`.
@@ -1128,18 +1157,14 @@ impl State {
     /// Maps to `luaL_getmetafield`.
     #[inline(always)]
     pub fn get_metafield(&self, obj: Index, e: &CStr) -> bool {
-        let result = unsafe {
-            luaL_getmetafield(self.0, obj, e.as_ptr())
-        };
+        let result = unsafe { luaL_getmetafield(self.0, obj, e.as_ptr()) };
         result != 0
     }
 
     /// Maps to `luaL_callmeta`.
     #[inline(always)]
     pub fn call_meta(&self, obj: Index, e: &CStr) -> bool {
-        let result = unsafe {
-            luaL_callmeta(self.0, obj, e.as_ptr())
-        };
+        let result = unsafe { luaL_callmeta(self.0, obj, e.as_ptr()) };
         result != 0
     }
 
@@ -1176,7 +1201,8 @@ impl State {
 
     #[inline(always)]
     pub fn to_str(&self, index: Index) -> Option<&'static str> {
-        self.to_bytes(index).map(|r| unsafe { str::from_utf8_unchecked(r) })
+        self.to_bytes(index)
+            .map(|r| unsafe { str::from_utf8_unchecked(r) })
     }
 
     /// Maps to `lua_tolstring`, but allows arbitrary bytes.
@@ -1271,7 +1297,11 @@ impl State {
     /// Convenience function that calls `test_userdata` and performs a cast.
     //#[unstable(reason="this is an experimental function")]
     #[inline(always)]
-    pub unsafe fn test_userdata_typed<'a, T>(&'a mut self, arg: Index, tname: &CStr) -> Option<&'a mut T> {
+    pub unsafe fn test_userdata_typed<'a, T>(
+        &'a mut self,
+        arg: Index,
+        tname: &CStr,
+    ) -> Option<&'a mut T> {
         mem::transmute(self.test_userdata(arg, tname))
     }
 
@@ -1304,9 +1334,7 @@ impl State {
                 let c_str = CString::new(def).unwrap();
                 luaL_checkoption(self.0, arg, c_str.as_ptr(), vec.as_ptr())
             },
-            None      => unsafe {
-                luaL_checkoption(self.0, arg, ptr::null(), vec.as_ptr())
-            }
+            None => unsafe { luaL_checkoption(self.0, arg, ptr::null(), vec.as_ptr()) },
         };
         result as usize
     }
@@ -1337,9 +1365,7 @@ impl State {
     /// Maps to `luaL_loadfile`.
     pub fn load_file(&self, filename: &str) -> ThreadStatus {
         let c_str = CString::new(filename).unwrap();
-        let result = unsafe {
-            luaL_loadfile(self.0, c_str.as_ptr())
-        };
+        let result = unsafe { luaL_loadfile(self.0, c_str.as_ptr()) };
         ThreadStatus::from_c_int(result)
     }
 
@@ -1347,7 +1373,15 @@ impl State {
     pub fn load_bufferx(&self, buff: &[u8], name: &str, mode: &str) -> ThreadStatus {
         let name_c_str = CString::new(name).unwrap();
         let mode_c_str = CString::new(mode).unwrap();
-        let result = unsafe { luaL_loadbufferx(self.0, buff.as_ptr() as *const _, buff.len() as size_t, name_c_str.as_ptr(), mode_c_str.as_ptr()) };
+        let result = unsafe {
+            luaL_loadbufferx(
+                self.0,
+                buff.as_ptr() as *const _,
+                buff.len() as size_t,
+                name_c_str.as_ptr(),
+                mode_c_str.as_ptr(),
+            )
+        };
         ThreadStatus::from_c_int(result)
     }
 
@@ -1357,18 +1391,29 @@ impl State {
         let result = unsafe { luaL_loadstring(self.0, c_str.as_ptr()) };
         ThreadStatus::from_c_int(result)
     }
-    
+
     /// Maps to `lua_dump`.
     #[inline]
     pub fn dump(&self, mut writer: impl FnMut(&[u8]), strip: bool) -> c_int {
         use core::mem::transmute;
-        unsafe extern "C" fn dump_wrapper(L: *mut lua_State, p: *const c_void, sz: usize, ud: *mut c_void) -> c_int {
+        unsafe extern "C" fn dump_wrapper(
+            L: *mut lua_State,
+            p: *const c_void,
+            sz: usize,
+            ud: *mut c_void,
+        ) -> c_int {
             let callback = transmute::<_, &mut &mut dyn FnMut(&[u8])>(ud);
-            callback(core::slice::from_raw_parts(p as *const u8, sz)); 0
+            callback(core::slice::from_raw_parts(p as *const u8, sz));
+            0
         }
         let writer: &mut dyn FnMut(&[u8]) = &mut writer;
         unsafe {
-            lua_dump(self.0, Some(dump_wrapper), transmute(&writer), strip as c_int)
+            lua_dump(
+                self.0,
+                Some(dump_wrapper),
+                transmute(&writer),
+                strip as c_int,
+            )
         }
     }
 
@@ -1382,9 +1427,8 @@ impl State {
         let s_c_str = CString::new(s).unwrap();
         let p_c_str = CString::new(p).unwrap();
         let r_c_str = CString::new(r).unwrap();
-        let ptr = unsafe {
-            luaL_gsub(self.0, s_c_str.as_ptr(), p_c_str.as_ptr(), r_c_str.as_ptr())
-        };
+        let ptr =
+            unsafe { luaL_gsub(self.0, s_c_str.as_ptr(), p_c_str.as_ptr(), r_c_str.as_ptr()) };
         let slice = unsafe { CStr::from_ptr(ptr).to_bytes() };
         str::from_utf8(slice).unwrap()
     }
@@ -1392,23 +1436,27 @@ impl State {
     /// Maps to `luaL_setfuncs`.
     pub fn set_fns(&self, l: &[(&str, lua_CFunction)], nup: c_int) {
         let mut reg: Vec<luaL_Reg> = Vec::with_capacity(l.len() + 1);
-        let ents: Vec<(CString, lua_CFunction)> = l.iter().map(|&(s, f)| (CString::new(s).unwrap(), f)).collect();
+        let ents: Vec<(CString, lua_CFunction)> = l
+            .iter()
+            .map(|&(s, f)| (CString::new(s).unwrap(), f))
+            .collect();
         for &(ref s, f) in ents.iter() {
             reg.push(luaL_Reg {
                 name: s.as_ptr(),
-                func: f
+                func: f,
             });
         }
-        reg.push(luaL_Reg {name: ptr::null(), func: None});
+        reg.push(luaL_Reg {
+            name: ptr::null(),
+            func: None,
+        });
         unsafe { luaL_setfuncs(self.0, reg.as_ptr(), nup) }
     }
 
     /// Maps to `luaL_getsubtable`.
     #[inline(always)]
     pub fn get_subtable(&self, idx: Index, fname: &CStr) -> bool {
-        unsafe {
-            luaL_getsubtable(self.0, idx, fname.as_ptr()) != 0
-        }
+        unsafe { luaL_getsubtable(self.0, idx, fname.as_ptr()) != 0 }
     }
 
     /// Maps to `luaL_traceback`.
@@ -1439,9 +1487,7 @@ impl State {
     #[inline(always)]
     pub fn arg_check(&self, cond: bool, arg: Index, extramsg: &str) {
         let c_str = CString::new(extramsg).unwrap();
-        unsafe {
-            luaL_argcheck(self.0, cond as c_int, arg, c_str.as_ptr())
-        }
+        unsafe { luaL_argcheck(self.0, cond as c_int, arg, c_str.as_ptr()) }
     }
 
     /// Maps to `luaL_checklstring`.
@@ -1490,7 +1536,9 @@ impl State {
     // Wrapper functions
     //===========================================================================
     #[inline(always)]
-    pub fn val(&self, i: Index) -> ValRef { ValRef::new(self, i) }
+    pub fn val(&self, i: Index) -> ValRef {
+        ValRef::new(self, i)
+    }
 
     /// [-0, +0, -]
     #[inline(always)]
@@ -1514,7 +1562,9 @@ impl State {
     /// [-0, +1, -]
     #[inline(always)]
     pub fn global(&self) -> ValRef {
-        unsafe { lua_rawgeti(self.0, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS); }
+        unsafe {
+            lua_rawgeti(self.0, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+        }
         self.val(-1)
     }
 
@@ -1536,22 +1586,24 @@ impl State {
     pub fn push_userdata<T>(&self, data: T, metatable: Option<InitMetatable>) -> &mut T {
         let result: &mut T = unsafe { mem::transmute(self.new_userdata(mem::size_of::<T>())) };
         mem::forget(mem::replace(result, data));
-        if let Some(m) = metatable { self.set_or_init_metatable(m); }
+        if let Some(m) = metatable {
+            self.set_or_init_metatable(m);
+        }
         result
     }
 
     /// [-0, +1, -]
     pub fn push_userdata_pointer<T>(&self, data: *mut T, metatable: InitMetatable) {
-        let result: &mut *mut T = unsafe { mem::transmute(self.new_userdata(mem::size_of_val(&data))) };
+        let result: &mut *mut T =
+            unsafe { mem::transmute(self.new_userdata(mem::size_of_val(&data))) };
         mem::replace(result, data);
         self.set_or_init_metatable(metatable);
     }
 
     /// [-0, +1, -]
     pub fn push_userdata_pointer_body<T>(&self, data: T, metatable: InitMetatable) -> &mut T {
-        let result: &mut (*mut T, T) = unsafe {
-            mem::transmute(self.new_userdata(mem::size_of::<(*mut T, T)>()))
-        };
+        let result: &mut (*mut T, T) =
+            unsafe { mem::transmute(self.new_userdata(mem::size_of::<(*mut T, T)>())) };
         mem::forget(mem::replace(result, (ptr::null_mut(), data)));
         result.0 = &mut result.1;
         self.set_or_init_metatable(metatable);
@@ -1559,9 +1611,7 @@ impl State {
     }
 
     pub fn check_udata<T>(&self, i: Index, name: &CStr) -> &mut T {
-        unsafe {
-            mem::transmute(luaL_checkudata(self.0, i, name.as_ptr()))
-        }
+        unsafe { mem::transmute(luaL_checkudata(self.0, i, name.as_ptr())) }
     }
 
     #[inline(always)]
@@ -1596,10 +1646,15 @@ impl State {
         let buffer = source.as_ref();
         let chunk = match chunk_name {
             Some(name) => name.as_ptr(),
-            None       => ptr::null(),
+            None => ptr::null(),
         };
         ThreadStatus::from_c_int(unsafe {
-            luaL_loadbuffer(self.0, buffer.as_ptr() as *const c_char, buffer.len(), chunk as *const c_char)
+            luaL_loadbuffer(
+                self.0,
+                buffer.as_ptr() as *const c_char,
+                buffer.len(),
+                chunk as *const c_char,
+            )
         })
     }
 
@@ -1609,15 +1664,18 @@ impl State {
         let p = callback as *const usize;
         let metatable = reg.getp(p);
         if metatable.is_nil() {
-            callback(&self.table(0, 0));
+            let mt = self.table(0, 0);
+            self.balance_with(|s| callback(&mt));
             assert!(self.type_of(-1) == Type::Table);
 
             if self.get_field(-1, cstr!("__name")) == Type::String {
                 self.push_value(-2);
                 self.set_table(reg.index);
-            } else { self.pop(1); }
+            } else {
+                self.pop(1);
+            }
 
-            reg.setp(p, self.val(-1));
+            reg.setp(p, mt);
             self.replace(-2);
         }
     }
@@ -1633,7 +1691,8 @@ impl State {
 
     /// [-1, +1, -]
     pub fn trace_error(&self, s: Option<&State>) -> &'static str {
-        let err = self.to_str(-1).unwrap_or(""); self.pop(1);
+        let err = self.to_str(-1).unwrap_or("");
+        self.pop(1);
         unsafe {
             let thread = s.unwrap_or(self);
             luaL_traceback(self.0, thread.0, err.as_ptr() as *const c_char, 0);
@@ -1642,7 +1701,9 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn arg<T: FromLua>(&self, index: Index) -> Option<T> { T::from_lua(self, index) }
+    pub fn arg<T: FromLua>(&self, index: Index) -> Option<T> {
+        T::from_lua(self, index)
+    }
 
     #[inline(always)]
     pub fn args<T: FromLuaMulti>(&self, index: Index) -> T {
@@ -1655,10 +1716,14 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn fargs<T: FromLuaMulti>(&self) -> T { self.args::<T>(1) }
+    pub fn fargs<T: FromLuaMulti>(&self) -> T {
+        self.args::<T>(1)
+    }
 
     #[inline(always)]
-    pub fn margs<T: FromLuaMulti>(&self) -> T { self.args::<T>(2) }
+    pub fn margs<T: FromLuaMulti>(&self) -> T {
+        self.args::<T>(2)
+    }
 
     #[inline(always)]
     pub fn pushx<T: ToLuaMulti>(&self, t: T) -> c_int {
@@ -1693,8 +1758,19 @@ impl State {
     #[inline(always)]
     pub fn push_result(&self, r: Result<impl ToLua, impl alloc::fmt::Debug>, raise: bool) -> c_int {
         match r {
-            Ok(v) => { self.push(v); 1 }
-            Err(e) => if raise { self.raise_error(e); } else { self.push(false); self.push_string(&format!("{:?}", e)); 2 }
+            Ok(v) => {
+                self.push(v);
+                1
+            }
+            Err(e) => {
+                if raise {
+                    self.raise_error(e);
+                } else {
+                    self.push(false);
+                    self.push_string(&format!("{:?}", e));
+                    2
+                }
+            }
         }
     }
 
@@ -1708,21 +1784,28 @@ impl State {
 
     pub unsafe extern "C" fn traceback_c(l: *mut ffi::lua_State) -> i32 {
         let s = State::from_ptr(l);
-        ffi::luaL_traceback(l, l, s.to_string(1), 1); 1
+        ffi::luaL_traceback(l, l, s.to_string(1), 1);
+        1
     }
 
     /// [-1, +0, -]
     #[inline(always)]
-    pub fn xpcall<T: ToLuaMulti, R: FromLuaMulti>(&self, msg: CFunction, args: T) -> Result<R, String> {
+    pub fn xpcall<T: ToLuaMulti, R: FromLuaMulti>(
+        &self,
+        msg: CFunction,
+        args: T,
+    ) -> Result<R, String> {
         let i = self.get_top();
         self.push_fn(Some(msg));
         // FIXME:
         self.insert(i);
         let r = match self.pcall(self.pushx(args), R::COUNT as i32, i) {
-            ThreadStatus::Ok => R::from_lua(self, self.abs_index(-(R::COUNT as i32))).ok_or("<type not match>".to_string()),
-            _ => Err(self.to_str(-1).unwrap_or("<error>").to_string())
+            ThreadStatus::Ok => R::from_lua(self, self.abs_index(-(R::COUNT as i32)))
+                .ok_or("<type not match>".to_string()),
+            _ => Err(self.to_str(-1).unwrap_or("<error>").to_string()),
         };
-        self.set_top(i - 1); r
+        self.set_top(i - 1);
+        r
     }
 
     // tracebacked pcall
@@ -1736,9 +1819,13 @@ impl State {
         match unsafe { lua_type(self.0, i) } {
             LUA_TNONE => Value::None,
             LUA_TNIL => Value::Nil,
-            LUA_TNUMBER => if self.is_integer(i) {
-                Value::Int(self.to_integer(i))
-            } else { Value::Num(self.to_number(i)) },
+            LUA_TNUMBER => {
+                if self.is_integer(i) {
+                    Value::Int(self.to_integer(i))
+                } else {
+                    Value::Num(self.to_number(i))
+                }
+            }
             LUA_TSTRING => Value::Str(self.to_str(i).unwrap()),
             LUA_TBOOLEAN => Value::Bool(self.to_bool(i)),
             LUA_TLIGHTUSERDATA => Value::LightUserdata,
@@ -1760,7 +1847,10 @@ pub struct BalanceState<'a> {
 
 impl<'a> BalanceState<'a> {
     pub fn new(state: &'a State) -> Self {
-        Self {state, top: state.get_top()}
+        Self {
+            state,
+            top: state.get_top(),
+        }
     }
 }
 

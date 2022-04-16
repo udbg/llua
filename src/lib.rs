@@ -35,18 +35,20 @@ cfg_if! {
     }
 }
 
+pub mod binding;
 pub mod ffi;
-pub mod lserde;
 
 mod convert;
 mod lmacro;
 mod luaconf;
+mod serde;
 mod state;
-#[cfg(feature = "std")]
-pub mod stdconv;
+#[cfg(test)]
+mod test;
 mod util;
 mod value;
 
+pub use self::serde::*;
 pub use convert::*;
 pub use lmacro::*;
 pub use state::*;

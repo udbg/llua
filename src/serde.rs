@@ -1,8 +1,9 @@
+//! [serde](https://crates.io/crates/serde) utilities for lua
+
 use super::*;
 
 use crate::{ffi::*, FromLua, State, ToLua, Type, ValRef};
-use alloc::fmt::{self, Display};
-use serde::{
+use ::serde::{
     de::{
         Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor,
     },
@@ -12,6 +13,7 @@ use serde::{
         Serializer,
     },
 };
+use alloc::fmt::{self, Display};
 
 #[derive(Clone, Debug, PartialEq, Display)]
 pub enum DesErr {
@@ -51,20 +53,29 @@ impl DeErr for DesErr {
     }
 }
 
-#[inline(always)]
-fn push_with_serialize<V: Serialize>(s: &State, v: V) -> Result<(), core::fmt::Error> {
-    v.serialize(LuaSerializer(s))
+impl State {
+    #[inline(always)]
+    pub fn push_serialize<V: Serialize>(&self, v: V) -> Result<(), core::fmt::Error> {
+        v.serialize(LuaSerializer(self))
+    }
 }
 
-#[derive(Copy, Clone, Deref)]
+#[derive(Copy, Clone, Deref, DerefMut)]
 pub struct SerdeValue<T>(pub T);
 
 impl<T: Serialize> ToLua for SerdeValue<T> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        if let Err(err) = push_with_serialize(s, self.0) {
+        if let Err(err) = s.push_serialize(self.0) {
             s.raise_error(err);
         }
+    }
+}
+
+impl<'a, T: Deserialize<'a>> FromLua for SerdeValue<T> {
+    #[inline(always)]
+    fn from_lua(s: &State, i: i32) -> Option<SerdeValue<T>> {
+        Some(SerdeValue(T::deserialize(s.val(i)).ok()?))
     }
 }
 
@@ -72,16 +83,6 @@ impl ValRef<'_> {
     #[inline(always)]
     pub fn deserialize<'a, T: Deserialize<'a>>(&self) -> Result<T, DesErr> {
         T::deserialize(*self)
-    }
-}
-
-#[derive(Copy, Clone, Deref, DerefMut)]
-pub struct DeserValue<T>(pub T);
-
-impl<'a, T: Deserialize<'a>> FromLua for DeserValue<T> {
-    #[inline(always)]
-    fn from_lua(s: &State, i: i32) -> Option<DeserValue<T>> {
-        Some(DeserValue(T::deserialize(s.val(i)).ok()?))
     }
 }
 
@@ -97,7 +98,7 @@ impl SerializeSeq for LuaTableSerializer<'_> {
         T: Serialize,
     {
         self.1 += 1;
-        push_with_serialize(self.0, value)?;
+        self.0.push_serialize(value)?;
         self.0.raw_seti(-2, self.1);
         Ok(())
     }
@@ -196,14 +197,14 @@ impl SerializeMap for LuaTableSerializer<'_> {
     where
         T: Serialize,
     {
-        push_with_serialize(self.0, key)
+        self.0.push_serialize(key)
     }
 
     fn serialize_value<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
     where
         T: Serialize,
     {
-        push_with_serialize(self.0, value)?;
+        self.0.push_serialize(value)?;
         self.0.raw_set(-3);
         Ok(())
     }
@@ -309,7 +310,7 @@ impl<'a> Serializer for LuaSerializer<'a> {
     where
         T: Serialize,
     {
-        push_with_serialize(self.0, value)
+        self.0.push_serialize(value)
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
@@ -340,7 +341,7 @@ impl<'a> Serializer for LuaSerializer<'a> {
     where
         T: Serialize,
     {
-        push_with_serialize(self.0, value)
+        self.0.push_serialize(value)
     }
     fn serialize_newtype_variant<T: ?Sized>(
         self,
@@ -713,7 +714,7 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
                 }
                 self.0.state.raw_geti(self.0.index, self.1 as _);
                 self.1 += 1;
-                let r = seed.deserialize(self.0.val(-1))?;
+                let r = seed.deserialize(self.0.state.val(-1))?;
                 self.0.state.pop(1);
                 Ok(Some(r))
             }
@@ -960,7 +961,7 @@ impl Serialize for ValRef<'_> {
         unsafe {
             match lua_type(self.state.as_ptr(), self.index) {
                 LUA_TSTRING => {
-                    let bytes = self.to_bytes(self.index).unwrap_or_default();
+                    let bytes = self.state.to_bytes(self.index).unwrap_or_default();
                     // TODO:
                     if bytes.len() > 300 {
                         serializer.serialize_bytes(bytes)
@@ -974,37 +975,40 @@ impl Serialize for ValRef<'_> {
                 // LUA_TSTRING => serializer.serialize_str(self.to_str(self.index).unwrap_or_default()),
                 LUA_TNUMBER => {
                     if self.is_integer() {
-                        serializer.serialize_i64(self.to_integer(self.index))
+                        serializer.serialize_i64(self.state.to_integer(self.index))
                     } else {
-                        serializer.serialize_f64(self.to_number(self.index))
+                        serializer.serialize_f64(self.state.to_number(self.index))
                     }
                 }
                 LUA_TFUNCTION => serializer.serialize_bool(true),
                 LUA_TBOOLEAN => serializer.serialize_bool(self.to_bool()),
                 LUA_TTABLE => {
-                    if self.raw_len(self.index) > 0 {
-                        let len = self.raw_len(self.index) as usize;
+                    if self.state.raw_len(self.index) > 0 {
+                        let len = self.state.raw_len(self.index) as usize;
                         let mut seq = serializer.serialize_seq(Some(len))?;
                         for i in 1..=len {
-                            self.raw_geti(self.index, i as lua_Integer);
-                            seq.serialize_element(&self.val(-1))?;
-                            self.pop(1);
+                            self.state.raw_geti(self.index, i as lua_Integer);
+                            seq.serialize_element(&self.state.val(-1))?;
+                            self.state.pop(1);
                         }
                         seq.end()
                     } else {
                         // get count of entries in the table
                         let mut count = 0usize;
-                        self.push_nil();
+                        self.state.push_nil();
                         while lua_next(self.state.as_ptr(), self.index) != 0 {
                             count += 1;
-                            self.pop(1);
+                            self.state.pop(1);
                         }
                         // serialize
                         let mut map = serializer.serialize_map(Some(count))?;
-                        self.push_nil();
+                        self.state.push_nil();
                         while lua_next(self.state.as_ptr(), self.index) != 0 {
-                            if let Err(_) = map.serialize_entry(&self.val(-2), &self.val(-1)) {}
-                            self.pop(1);
+                            if let Err(_) =
+                                map.serialize_entry(&self.state.val(-2), &self.state.val(-1))
+                            {
+                            }
+                            self.state.pop(1);
                         }
                         map.end()
                     }

@@ -1,3 +1,4 @@
+//! Macros for lua binding
 
 #[macro_export]
 macro_rules! cfn {
@@ -19,6 +20,7 @@ macro_rules! cfn {
     (@body_option $s:ident $body:block) => { #[allow(unused_braces)] $body };
     (@body_option $s:ident push $body:block) => { $s.pushx($body) };
     (@body_option $s:ident throw $body:block) => {{
+        #[allow(unused_mut)]
         let mut closure = || -> Result<i32, Box<dyn std::error::Error>> {
             Ok($body)
         };
