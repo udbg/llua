@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number};
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -171,7 +172,6 @@ pub trait UserData: Sized {
         0
     }
 }
-// impl<T> UserData for Arc<T> {}
 
 impl<T: UserData> ToLua for T {
     #[inline(always)]
@@ -251,12 +251,20 @@ impl<'a> ToLua for &'a std::ffi::OsStr {
     }
 }
 
-impl ToLua for String {
-    #[inline(always)]
-    fn to_lua(self, s: &State) {
-        s.push_string(&self);
-    }
+macro_rules! impl_as_str {
+    ($t:ty) => {
+        impl ToLua for $t {
+            #[inline(always)]
+            fn to_lua(self, s: &State) {
+                s.push_string(self.as_ref());
+            }
+        }
+    };
 }
+
+impl_as_str!(Arc<str>);
+impl_as_str!(Box<str>);
+impl_as_str!(String);
 
 impl<'a> ToLua for &'a [u8] {
     #[inline(always)]
@@ -305,7 +313,7 @@ impl<T> ToLua for UserDataWrapper<T> {
 impl<T: ToLua, I: Iterator<Item = T>> ToLua for IterVec<T, I> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        let r = s.table(self.0.size_hint().0 as _, 0);
+        let r = s.table(self.0.size_hint().1.unwrap_or(0) as _, 0);
         let mut i = 1;
         for e in self.0.into_iter() {
             r.seti(i, e);
@@ -317,7 +325,7 @@ impl<T: ToLua, I: Iterator<Item = T>> ToLua for IterVec<T, I> {
 impl<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>> ToLua for IterMap<K, V, I> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        let r = s.table(0, self.0.size_hint().0 as i32);
+        let r = s.table(0, self.0.size_hint().1.unwrap_or(0) as _);
         for (k, v) in self.0 {
             r.set(k, v);
         }

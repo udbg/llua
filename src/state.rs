@@ -220,10 +220,6 @@ bitflags::bitflags! {
 #[repr(C)]
 pub struct State(*mut lua_State);
 
-extern "C" {
-    fn llua_open_libs(_: &State);
-}
-
 impl State {
     /// Initializes a new Lua state. This function does not open any libraries
     /// by default. Calls `lua_newstate` internally.
@@ -253,7 +249,6 @@ impl State {
     pub fn open_libs(&self) {
         unsafe {
             luaL_openlibs(self.0);
-            llua_open_libs(self);
         }
     }
 
