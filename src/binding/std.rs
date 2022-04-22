@@ -325,7 +325,6 @@ pub fn extend_os(s: &State) {
         };
     });
 
-    use process::*;
     use std::collections::HashMap;
     use std::process::{Command, Stdio};
 

@@ -1,14 +1,11 @@
 #![no_std]
 #![feature(const_type_name)]
-#![feature(specialization)]
+#![feature(min_specialization)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
-#![allow(unused_imports)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![allow(unused_must_use)]
-#![allow(unused_braces)]
-#![allow(incomplete_features)]
 #![allow(non_upper_case_globals)]
 
 extern crate alloc;

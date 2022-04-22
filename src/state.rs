@@ -7,9 +7,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::ops::DerefMut;
-use core::{any, mem, ptr, slice, str};
-
+use core::{mem, ptr, slice, str};
 use libc::{c_char, c_int, c_void, size_t};
 
 pub type InitMetatable = fn(&ValRef);
@@ -1317,7 +1315,6 @@ impl State {
 
     /// Maps to `luaL_checkoption`.
     pub fn check_option(&self, arg: Index, def: Option<&str>, lst: &[&str]) -> usize {
-        use libc::c_char;
         let mut vec: Vec<*const c_char> = Vec::with_capacity(lst.len() + 1);
         let cstrs: Vec<CString> = lst.iter().map(|ent| CString::new(*ent).unwrap()).collect();
         for ent in cstrs.iter() {

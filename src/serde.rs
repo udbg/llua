@@ -8,7 +8,7 @@ use ::serde::{
         Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor,
     },
     ser::{
-        Error as SeErr, Serialize, SerializeMap, SerializeSeq, SerializeStruct,
+        Serialize, SerializeMap, SerializeSeq, SerializeStruct,
         SerializeStructVariant, SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
         Serializer,
     },

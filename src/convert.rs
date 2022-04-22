@@ -1,14 +1,12 @@
 use super::*;
-
 use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number};
+
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::mem;
-use core::ops::Deref;
 use libc::c_int;
-use std::process::Output;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CRegRef(pub i32);
