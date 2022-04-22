@@ -84,6 +84,49 @@ pub trait UserData: Sized {
         Self::methods(&mt);
     }
 
+    /// initialize userdata on the top of lua stack
+    fn init_userdata(s: &State) {
+        if Self::INDEX_USERVALUE {
+            s.new_table();
+            s.set_uservalue(-2);
+        }
+    }
+
+    /// get a pointer whose type is lightuserdata as the key in cache table
+    fn key_to_cache(&self) -> *const () {
+        core::ptr::null()
+    }
+
+    fn get_cahced(s: &State, key: *const ()) -> bool {
+        s.get_or_init_metatable(Self::init_metatable);
+        // use metatable of userdata's metatable as cache table
+        if !s.get_metatable(-1) {
+            s.new_table();
+            s.val(-1).set("__mode", "v");
+            s.push_value(-1);
+            s.set_metatable(-3);
+            s.push_value(-1);
+            s.set_metatable(-2);
+        }
+        s.push_light_userdata(key as usize as *mut ());
+        if s.raw_get(-2) == Type::Userdata {
+            s.replace(-3);
+            s.pop(1);
+            return true;
+        }
+        s.pop(1);
+        s.push_light_userdata(key as usize as *mut ());
+        false
+    }
+
+    fn cache_userdata(s: &State, _key: *const ()) {
+        // meta | meta's meta | key | userdata
+        s.push_value(-1);
+        s.replace(-5);
+        s.raw_set(-3);
+        s.pop(1);
+    }
+
     unsafe extern "C" fn __index(l: *mut lua_State) -> c_int {
         let s = State::from_ptr(l);
 
@@ -174,14 +217,22 @@ pub trait UserData: Sized {
 impl<T: UserData> ToLua for T {
     #[inline(always)]
     fn to_lua(self, s: &State) {
+        let key = self.key_to_cache();
+        if !key.is_null() && T::get_cahced(s, key) {
+            return;
+        }
+
         if T::IS_POINTER {
             s.push_userdata_pointer_body(self, Self::init_metatable);
         } else {
             s.push_userdata(self, Some(Self::init_metatable));
         }
         if T::INDEX_USERVALUE {
-            s.new_table();
-            s.set_uservalue(-2);
+            s.balance_with(T::init_userdata);
+        }
+
+        if !key.is_null() {
+            T::cache_userdata(s, key)
         }
     }
 }
@@ -190,10 +241,21 @@ impl<T: UserData> ToLua for *mut T {
     #[inline(always)]
     fn to_lua(self, s: &State) {
         assert!(T::IS_POINTER);
-        s.push_userdata_pointer(self, T::init_metatable);
-        if T::INDEX_USERVALUE {
-            s.new_table();
-            s.set_uservalue(-2);
+
+        if let Some(r) = unsafe { self.as_ref() } {
+            let key = r.key_to_cache();
+            if !key.is_null() && T::get_cahced(s, key) {
+                return;
+            }
+            s.push_userdata_pointer(self, T::init_metatable);
+            if T::INDEX_USERVALUE {
+                s.balance_with(T::init_userdata);
+            }
+            if !key.is_null() {
+                T::cache_userdata(s, key)
+            }
+        } else {
+            s.push_nil();
         }
     }
 }

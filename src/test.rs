@@ -1,8 +1,8 @@
 #![cfg(feature = "vendored")]
 
-use core::any::Any;
+use crate::*;
 
-use crate::{serde::SerdeValue, *};
+use alloc::rc::Rc;
 
 struct Test {
     a: i32,
@@ -22,6 +22,12 @@ impl UserData for Test {
     }
 }
 
+impl UserData for Rc<Test> {
+    fn key_to_cache(&self) -> *const () {
+        self.as_ref() as *const _ as _
+    }
+}
+
 #[test]
 fn userdata() {
     let s = State::new();
@@ -35,11 +41,17 @@ fn userdata() {
     s.do_string("assert(uv.a == 0)").chk_err(&s);
     s.do_string("uv:inc(); assert(uv.a == 1)").chk_err(&s);
     s.do_string("uv.a = 3; assert(uv.a == 3)").chk_err(&s);
+
+    let test = Rc::new(Test { a: 0 });
+    s.global().set("uv", test.clone());
+    s.global().set("uv1", test.clone());
+    s.do_string("print(uv, uv1)");
+    s.do_string("assert(uv == uv1)").chk_err(&s);
 }
 
 #[test]
 fn serde() {
-    use serde::{Deserialize, Serialize};
+    use ::serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
     struct Test<'a> {
