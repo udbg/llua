@@ -39,6 +39,20 @@ impl From<i32> for Pushed {
     }
 }
 
+fn get_weak_meta(s: &State) {
+    let top = s.get_top();
+    s.push_light_userdata(get_weak_meta as usize as *mut ());
+    if s.c_reg().get(TopVal).type_of() != Type::Table {
+        s.pop(1);
+        s.new_table();
+        s.val(-1).set("__mode", "v");
+        s.push_light_userdata(get_weak_meta as usize as *mut ());
+        s.push_value(-2);
+        s.raw_set(LUA_REGISTRYINDEX);
+    }
+    assert_eq!(s.get_top(), top + 1);
+}
+
 pub trait UserData: Sized {
     /// `__name`
     const TYPE_NAME: &'static str = core::any::type_name::<Self>();
@@ -102,10 +116,9 @@ pub trait UserData: Sized {
         // use metatable of userdata's metatable as cache table
         if !s.get_metatable(-1) {
             s.new_table();
-            s.val(-1).set("__mode", "v");
             s.push_value(-1);
             s.set_metatable(-3);
-            s.push_value(-1);
+            get_weak_meta(s);
             s.set_metatable(-2);
         }
         s.push_light_userdata(key as usize as *mut ());

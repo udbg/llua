@@ -26,6 +26,10 @@ impl UserData for Rc<Test> {
     fn key_to_cache(&self) -> *const () {
         self.as_ref() as *const _ as _
     }
+
+    fn getter(fields: &ValRef) {
+        fields.register("a", |this: &Self| this.a);
+    }
 }
 
 #[test]
@@ -42,11 +46,12 @@ fn userdata() {
     s.do_string("uv:inc(); assert(uv.a == 1)").chk_err(&s);
     s.do_string("uv.a = 3; assert(uv.a == 3)").chk_err(&s);
 
-    let test = Rc::new(Test { a: 0 });
+    let test = Rc::new(Test { a: 123 });
     s.global().set("uv", test.clone());
     s.global().set("uv1", test.clone());
     s.do_string("print(uv, uv1)");
     s.do_string("assert(uv == uv1)").chk_err(&s);
+    s.do_string("assert(uv.a == 123)").chk_err(&s);
 }
 
 #[test]
