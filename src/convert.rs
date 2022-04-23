@@ -175,19 +175,21 @@ pub trait UserData: Sized {
             return 1;
         }
 
-        // access getter function
-        if let Some(getter) = Self::GETTER {
-            let n = getter(l);
-            if n > 0 {
-                return n;
-            }
-        }
-
         // access user value as table
         if Self::INDEX_USERVALUE {
             s.get_uservalue(1);
             s.push_value(2);
-            s.get_table(-2);
+            if !s.get_table(-2).is_none_or_nil() {
+                return 1;
+            }
+        }
+
+        // access getter function
+        if let Some(getter) = Self::GETTER {
+            s.push(getter);
+            s.push_value(1);
+            s.push_value(2);
+            s.call(2, 1);
             return 1;
         }
 
