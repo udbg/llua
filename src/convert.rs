@@ -154,6 +154,10 @@ pub trait UserData: Sized {
         s.pop(1);
     }
 
+    fn uservalue_count(&self, s: &State) -> i32 {
+        Self::INDEX_USERVALUE as _
+    }
+
     unsafe extern "C" fn __index(l: *mut lua_State) -> c_int {
         let s = State::from_ptr(l);
 
@@ -252,7 +256,9 @@ impl<T: UserData> ToLua for T {
         if T::IS_POINTER {
             s.push_userdata_pointer_body(self, Self::init_metatable);
         } else {
-            s.push_userdata(self, Some(Self::init_metatable));
+            let count = self.uservalue_count(s);
+            s.push_userdatauv(self, count);
+            s.set_or_init_metatable(Self::init_metatable);
         }
         if T::INDEX_USERVALUE {
             s.balance_with(T::init_userdata);

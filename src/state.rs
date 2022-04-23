@@ -1600,17 +1600,28 @@ impl State {
     }
 
     /// [-0, +1, -]
-    pub fn push_userdata_pointer<T>(&self, data: *mut T, metatable: InitMetatable) {
-        let result: &mut *mut T =
-            unsafe { mem::transmute(self.new_userdata(mem::size_of_val(&data))) };
+    pub fn push_userdata_pointer<T: UserData>(&self, data: *mut T, metatable: InitMetatable) {
+        let result: &mut *mut T = unsafe {
+            mem::transmute(self.new_userdatauv(
+                mem::size_of_val(&data),
+                data.as_ref().unwrap().uservalue_count(self),
+            ))
+        };
         mem::replace(result, data);
         self.set_or_init_metatable(metatable);
     }
 
     /// [-0, +1, -]
-    pub fn push_userdata_pointer_body<T>(&self, data: T, metatable: InitMetatable) -> &mut T {
-        let result: &mut (*mut T, T) =
-            unsafe { mem::transmute(self.new_userdata(mem::size_of::<(*mut T, T)>())) };
+    pub fn push_userdata_pointer_body<T: UserData>(
+        &self,
+        data: T,
+        metatable: InitMetatable,
+    ) -> &mut T {
+        let result: &mut (*mut T, T) = unsafe {
+            mem::transmute(
+                self.new_userdatauv(mem::size_of::<(*mut T, T)>(), data.uservalue_count(self)),
+            )
+        };
         mem::forget(mem::replace(result, (ptr::null_mut(), data)));
         result.0 = &mut result.1;
         self.set_or_init_metatable(metatable);
