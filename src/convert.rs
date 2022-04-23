@@ -65,6 +65,8 @@ pub trait UserData: Sized {
     const GETTER: lua_CFunction = None;
     const IS_POINTER: bool = false;
 
+    const WEAK_REF_CACHE: bool = true;
+
     /// add methods
     fn methods(mt: &ValRef) {}
 
@@ -111,6 +113,16 @@ pub trait UserData: Sized {
         core::ptr::null()
     }
 
+    fn clear_cached(&self, s: &State) {
+        s.get_or_init_metatable(Self::init_metatable);
+        assert!(s.get_metatable(-1));
+        let key = self.key_to_cache();
+        s.push_light_userdata(key as usize as *mut ());
+        s.push_nil();
+        s.raw_set(-3);
+        s.pop(2);
+    }
+
     fn get_cahced(s: &State, key: *const ()) -> bool {
         s.get_or_init_metatable(Self::init_metatable);
         // use metatable of userdata's metatable as cache table
@@ -118,8 +130,10 @@ pub trait UserData: Sized {
             s.new_table();
             s.push_value(-1);
             s.set_metatable(-3);
-            get_weak_meta(s);
-            s.set_metatable(-2);
+            if Self::WEAK_REF_CACHE {
+                get_weak_meta(s);
+                s.set_metatable(-2);
+            }
         }
         s.push_light_userdata(key as usize as *mut ());
         if s.raw_get(-2) == Type::Userdata {

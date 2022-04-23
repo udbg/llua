@@ -714,6 +714,13 @@ impl State {
         Type::from_c_int(result)
     }
 
+    /// [-0, +1, –] Maps to `lua_getiuservalue`.
+    #[inline(always)]
+    pub fn get_iuservalue(&self, idx: Index, n: i32) -> Type {
+        let result = unsafe { lua_getiuservalue(self.0, idx, n) };
+        Type::from_c_int(result)
+    }
+
     //===========================================================================
     // Set functions (stack -> Lua)
     //===========================================================================
@@ -776,6 +783,14 @@ impl State {
     pub fn set_uservalue(&self, idx: Index) {
         unsafe {
             lua_setuservalue(self.0, idx);
+        }
+    }
+
+    /// [-1, +0, -] Maps to `lua_setiuservalue`.
+    #[inline(always)]
+    pub fn set_iuservalue(&self, idx: Index, n: i32) {
+        unsafe {
+            lua_setiuservalue(self.0, idx, n);
         }
     }
 
