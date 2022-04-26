@@ -1,6 +1,4 @@
-use super::*;
-
-
+use crate::{str::*, *};
 
 pub use crate::ffi::{
     lua_Alloc, lua_CFunction, lua_Hook, lua_Integer, lua_Number, CFunction, LUA_REGISTRYINDEX,

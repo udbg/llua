@@ -8,9 +8,8 @@ use ::serde::{
         Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor,
     },
     ser::{
-        Serialize, SerializeMap, SerializeSeq, SerializeStruct,
-        SerializeStructVariant, SerializeTuple, SerializeTupleStruct, SerializeTupleVariant,
-        Serializer,
+        Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
+        SerializeTuple, SerializeTupleStruct, SerializeTupleVariant, Serializer,
     },
 };
 use alloc::fmt::{self, Display};

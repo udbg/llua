@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::convert::{FromLua, FromLuaMulti, ToLua, ToLuaMulti};
-use crate::ffi::*;
+use crate::{ffi::*, str::*};
 
 use alloc::format;
 use alloc::string::String;
@@ -1474,8 +1474,8 @@ impl State {
 
     /// Maps to `luaL_requiref`.
     #[inline(always)]
-    pub fn requiref(&self, modname: &CStr, openf: lua_CFunction, glb: bool) {
-        unsafe { luaL_requiref(self.0, modname.as_ptr(), openf, glb as c_int) }
+    pub fn requiref(&self, modname: &CStr, openf: CFunction, glb: bool) {
+        unsafe { luaL_requiref(self.0, modname.as_ptr(), Some(openf), glb as c_int) }
     }
 
     /// Maps to `luaL_newlibtable`.

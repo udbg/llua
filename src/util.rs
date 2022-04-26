@@ -1,7 +1,7 @@
 pub use corepack;
 
 use crate::{serde::*, *};
-use ::serde::{Deserializer};
+use ::serde::Deserializer;
 use corepack::{error, read};
 
 pub struct LLuaMsgPack<'a>(pub &'a [u8]);

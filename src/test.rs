@@ -100,3 +100,21 @@ fn binding() {
 
 #[no_mangle]
 extern "C" fn llua_open_libs(_: &State) {}
+
+#[cfg(feature = "regex")]
+#[test]
+fn regex_binding() {
+    let s = State::new();
+    s.open_libs();
+    s.init_llua_global();
+
+    s.do_string(
+        r"
+        local re = require 'regex'
+        local cap = re.new[[(\w+)\s+(\w+)]]:capture 'abc def'
+        assert(cap[1] == 'abc')
+        assert(cap[2] == 'def')
+    ",
+    )
+    .chk_err(&s);
+}

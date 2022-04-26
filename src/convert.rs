@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number};
+use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number, str::*};
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;

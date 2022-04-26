@@ -1,8 +1,6 @@
 use crate::serde::*;
 use crate::*;
 
-use std::*;
-
 pub mod path {
     use super::*;
     use std::{ffi::OsStr, fs::Metadata, path::*};
@@ -574,7 +572,7 @@ mod thread {
                 if let Err(err) = routine.pcall_trace::<_, ()>(()) {
                     call_print(
                         &routine,
-                        &format!(
+                        &std::format!(
                             "<thread#{} \"{}\"> {}",
                             thread::current().id().as_u64().get(),
                             thread::current().name().unwrap_or_default(),
@@ -637,6 +635,6 @@ pub fn call_print(s: &State, err: &str) {
         s.push(err);
         s.pcall(1, 0, 0);
     } else {
-        eprintln!("[callback error] {}", err);
+        std::eprintln!("[callback error] {}", err);
     }
 }

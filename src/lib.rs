@@ -10,9 +10,8 @@
 #![allow(non_upper_case_globals)]
 
 extern crate alloc;
-
-#[macro_use]
-extern crate cfg_if;
+#[cfg(feature = "std")]
+extern crate std;
 #[macro_use]
 extern crate derive_more;
 
@@ -22,19 +21,45 @@ use alloc::string::*;
 use alloc::vec;
 use alloc::vec::Vec;
 
-cfg_if! {
-    if #[cfg(feature = "std")] {
-        extern crate std;
-
-        pub use std::ffi::{CStr, CString};
-        pub use c_str_macro::c_str as cstr;
-    } else {
-        pub use cstrptr::{CStr, CString, cstr};
-    }
-}
-
 pub mod binding;
 pub mod ffi;
+
+#[cfg(feature = "std")]
+#[macro_export]
+macro_rules! cstr {
+    ($lit:expr) => {
+        unsafe {
+            ::std::ffi::CStr::from_ptr(
+                concat!($lit, "\0").as_ptr() as *const ::std::os::raw::c_char
+            )
+        }
+    };
+}
+
+#[cfg(not(feature = "std"))]
+pub use cstrptr::cstr;
+
+#[cfg(feature = "std")]
+pub(crate) mod str {
+    pub use std::ffi::{CStr, CString};
+}
+
+// TODO: try cstr_core
+#[cfg(not(feature = "std"))]
+pub(crate) mod str {
+    pub use cstrptr::{CStr, CString};
+    use cty::c_char;
+
+    pub trait CStringExt {
+        fn as_ptr(&self) -> *const c_char;
+    }
+
+    impl CStringExt for CString {
+        fn as_ptr(&self) -> *const c_char {
+            self.as_c_str().as_ptr()
+        }
+    }
+}
 
 mod convert;
 mod lmacro;
