@@ -100,6 +100,11 @@ pub trait UserData: Sized {
         Self::methods(&mt);
     }
 
+    #[inline(always)]
+    fn metatable() -> InitMetatable {
+        Self::init_metatable
+    }
+
     /// initialize userdata on the top of lua stack
     fn init_userdata(s: &State) {
         if Self::INDEX_USERVALUE {
@@ -951,6 +956,13 @@ impl State {
     #[inline(always)]
     pub fn pushed<T: ToLuaMulti>(&self, t: T) -> Pushed {
         Pushed(self.pushx(t))
+    }
+
+    /// [-0, +1, -]
+    #[inline(always)]
+    pub fn metatable<U: UserData>(&self) -> ValRef {
+        self.get_or_init_metatable(U::init_metatable);
+        self.val(-1)
     }
 }
 
