@@ -56,13 +56,18 @@ fn get_weak_meta(s: &State) {
 pub trait UserData: Sized {
     /// `__name`
     const TYPE_NAME: &'static str = core::any::type_name::<Self>();
-    /// set `__index` to metatable itself
-    const INDEX_SELF: bool = true;
-    /// `__len` metamethod, if true, return the size of this userdata
+
+    /// get value from metatable itself in `__index`
+    const INDEX_METATABLE: bool = true;
+
+    /// get value from the first uservalue in `__index`
+    const INDEX_USERVALUE: bool = false;
+
+    const INDEX_GETTER: lua_CFunction = None;
+
+    /// set the `__len` metamethod, if true, return the size of this userdata
     const RAW_LEN: bool = false;
 
-    const INDEX_USERVALUE: bool = false;
-    const GETTER: lua_CFunction = None;
     const IS_POINTER: bool = false;
 
     const WEAK_REF_CACHE: bool = true;
@@ -176,7 +181,7 @@ pub trait UserData: Sized {
         }
 
         // access method table
-        if Self::INDEX_SELF && !s.get_metatable_by(1, s.val(2)).is_none_or_nil() {
+        if Self::INDEX_METATABLE && !s.get_metatable_by(1, s.val(2)).is_none_or_nil() {
             return 1;
         }
 
@@ -190,7 +195,7 @@ pub trait UserData: Sized {
         }
 
         // access getter function
-        if let Some(getter) = Self::GETTER {
+        if let Some(getter) = Self::INDEX_GETTER {
             s.push(getter);
             s.push_value(1);
             s.push_value(2);
