@@ -1,6 +1,8 @@
 use crate::serde::*;
 use crate::*;
 
+use std::*;
+
 pub mod path {
     use super::*;
     use std::{ffi::OsStr, fs::Metadata, path::*};
@@ -414,9 +416,207 @@ pub fn extend_string(s: &State) {
     );
 }
 
+#[cfg(feature = "thread")]
+mod thread {
+    use super::*;
+
+    #[cfg(not(target_os = "windows"))]
+    use std::os::unix::thread::{JoinHandleExt, RawPthread as RawHandle};
+    #[cfg(target_os = "windows")]
+    use std::os::windows::io::{AsRawHandle, RawHandle};
+    use std::ptr;
+    use std::sync::*;
+    use std::thread::{self, JoinHandle};
+    use std::time::Duration;
+
+    struct LLuaThread {
+        handle: RawHandle,
+        join: Option<JoinHandle<()>>,
+    }
+
+    impl LLuaThread {
+        #[inline]
+        fn get(&self) -> Result<&JoinHandle<()>, &'static str> {
+            self.join.as_ref().ok_or("thread joined")
+        }
+    }
+
+    impl UserData for LLuaThread {
+        const TYPE_NAME: &'static str = "LLuaThread";
+
+        fn getter(fields: &ValRef) {
+            fields.register("handle", |this: &Self| this.handle as usize);
+            fields.register("name", |this: &Self| {
+                this.get().map(|j| {
+                    j.thread()
+                        .name()
+                        .map(ToString::to_string)
+                        .unwrap_or_default()
+                })
+            });
+            fields.register("id", |this: &Self| {
+                this.get().map(|j| j.thread().id().as_u64().get())
+            });
+        }
+
+        fn methods(mt: &ValRef) {
+            mt.register("join", |this: &mut Self| {
+                this.join.take().ok_or("thread joined").map(|j| j.join())
+            });
+            mt.register("unpark", |this: &Self| {
+                this.get().map(|j| j.thread().unpark())
+            });
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    const RAW_NULL: RawHandle = ptr::null_mut();
+    #[cfg(not(target_os = "windows"))]
+    const RAW_NULL: RawHandle = 0;
+
+    #[derive(Default, Deref, AsRef)]
+    struct LLuaMutex(Mutex<()>);
+    struct LLuaMutexGaurd(Option<MutexGuard<'static, ()>>);
+
+    impl UserData for LLuaMutexGaurd {
+        const TYPE_NAME: &'static str = "LLuaMutexGaurd";
+
+        fn methods(mt: &ValRef) {
+            fn unlock(this: &mut LLuaMutexGaurd) {
+                this.0.take();
+            }
+
+            mt.register("unlock", unlock);
+            mt.register("__close", unlock);
+        }
+    }
+
+    impl UserData for LLuaMutex {
+        const TYPE_NAME: &'static str = "LLuaMutex";
+
+        fn methods(mt: &ValRef) {
+            MethodRegistry::<Self, Mutex<()>>::new(mt)
+                .register("is_poisoned", Mutex::<()>::is_poisoned);
+            mt.register("lock", |this: &'static Self| {
+                this.0.lock().map(|g| LLuaMutexGaurd(Some(g)))
+            });
+            mt.register("try_lock", |this: &'static Self| {
+                this.0.try_lock().ok().map(|g| LLuaMutexGaurd(Some(g)))
+            });
+        }
+    }
+
+    #[derive(Default)]
+    struct LLuaCondVar {
+        lock: Mutex<i32>,
+        cvar: Condvar,
+    }
+
+    impl UserData for LLuaCondVar {
+        const TYPE_NAME: &'static str = "LLuaCondVar";
+
+        fn methods(mt: &ValRef) {
+            mt.register("wait", |s: &State, this: &'static Self, tm: Option<u64>| {
+                this.wait(s, tm).map(Pushed)
+            });
+            mt.register("notify_one", LLuaCondVar::notify_one);
+            mt.register("notify_all", LLuaCondVar::notify_all);
+        }
+    }
+
+    impl LLuaCondVar {
+        fn push_some(&self, s: &State) {
+            let mut i = self.lock.lock().unwrap();
+            s.unreference(LUA_REGISTRYINDEX, (*i).into());
+            s.push_value(2);
+            *i = s.reference(LUA_REGISTRYINDEX).0;
+        }
+
+        fn notify_one(&self, s: &State) {
+            self.push_some(s);
+            self.cvar.notify_one();
+        }
+
+        fn notify_all(&self, s: &State) {
+            self.push_some(s);
+            self.cvar.notify_all();
+        }
+
+        fn wait<'a>(
+            &'a self,
+            s: &State,
+            timeout: Option<u64>,
+        ) -> Result<i32, Box<dyn std::error::Error + 'a>> {
+            let lock = &self.lock;
+            let cvar = &self.cvar;
+            if let Some(tm) = timeout {
+                let (i, r) = cvar.wait_timeout(lock.lock().unwrap(), Duration::from_millis(tm))?;
+                if r.timed_out() {
+                    return Ok(0);
+                }
+                s.raw_geti(LUA_REGISTRYINDEX, (*i) as i64);
+            } else {
+                let i = cvar.wait(lock.lock().unwrap())?;
+                s.raw_geti(LUA_REGISTRYINDEX, (*i) as i64);
+            }
+            Ok(1)
+        }
+    }
+
+    pub fn init(s: &State) {
+        let t = s.table(0, 4);
+        t.register("spawn", |routine: Coroutine, name: Option<&str>| {
+            let mut b = thread::Builder::new();
+            if let Some(name) = name {
+                b = b.name(name.into());
+            }
+            b.spawn(move || {
+                if let Err(err) = routine.pcall_trace::<_, ()>(()) {
+                    call_print(
+                        &routine,
+                        &format!(
+                            "<thread#{} \"{}\"> {}",
+                            thread::current().id().as_u64().get(),
+                            thread::current().name().unwrap_or_default(),
+                            err
+                        ),
+                    );
+                }
+            })
+            .map(|join| {
+                #[cfg(target_os = "windows")]
+                let handle = join.as_raw_handle();
+                #[cfg(not(target_os = "windows"))]
+                let handle = join.as_pthread_t();
+                // let u = s.push_userdata(LLuaThread {join, handle, ref_ud: Cell::new(NOREF)}, Some(LLuaThread::init));
+                // u.ref_ud.set({ s.push_value(-1); s.reference(LUA_REGISTRYINDEX) });
+                // return 1;
+                // TODO: ref_ud
+                LLuaThread {
+                    join: Some(join),
+                    handle,
+                }
+            })
+        });
+        t.register("sleep", |time: u64| {
+            thread::sleep(Duration::from_millis(time))
+        });
+        t.register("park", thread::park);
+        t.register("id", || thread::current().id().as_u64().get());
+        t.register("name", |s: &State| s.pushed(thread::current().name()));
+        t.register("yield_now", thread::yield_now);
+        t.register("mutex", LLuaMutex::default);
+        t.register("condvar", LLuaCondVar::default);
+
+        s.set_global(cstr!("thread"));
+    }
+}
+
 pub fn init_global(s: &State) {
     extend_os(s);
     extend_string(s);
+    #[cfg(feature = "thread")]
+    thread::init(s);
 
     let g = s.global();
     g.set(
@@ -428,4 +628,15 @@ pub fn init_global(s: &State) {
         }),
     );
     g.register("writefile", std::fs::write::<&std::path::Path, &[u8]>);
+}
+
+pub fn call_print(s: &State, err: &str) {
+    if s.get_global(cstr!("__llua_error")) == Type::Function
+        || s.get_global(cstr!("print")) != Type::Function
+    {
+        s.push(err);
+        s.pcall(1, 0, 0);
+    } else {
+        eprintln!("[callback error] {}", err);
+    }
 }

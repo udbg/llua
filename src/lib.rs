@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(const_type_name)]
+#![feature(thread_id_value)]
 #![feature(min_specialization)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]

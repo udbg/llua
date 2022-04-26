@@ -13,6 +13,7 @@ categories = ["api-bindings", "no-std"]
 
 [features]
 default = ['std']
+thread = ['std']
 vendored = ['lua-src']
 std = ['c_str_macro', 'bitflags', 'corepack/std']
 
