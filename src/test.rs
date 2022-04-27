@@ -40,6 +40,10 @@ fn userdata() {
     let uv = s.val(-1);
     assert_eq!(uv.type_of(), Type::Userdata);
     s.global().set("uv", uv);
+    let test_value = 0x11223344;
+    s.global().set("test", RsFn::new(move || test_value));
+
+    s.do_string("assert(test() == 0x11223344)").chk_err(&s);
 
     s.do_string("print(getmetatable(uv), type(uv))");
     s.do_string("assert(uv.a == 0)").chk_err(&s);

@@ -305,19 +305,18 @@ impl<T: UserData> ToLua for *mut T {
     }
 }
 
-pub trait LuaFn<'a, THIS, ARGS, RET> {
+pub trait LuaFn<'a, THIS: 'a, ARGS: 'a, RET: 'a> {
     unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int;
 }
 
-impl<'a, THIS: 'a, T, O, F: LuaFn<'a, THIS, T, O>> RsFn<THIS, T, O, F> {
+impl<'a, THIS: 'a, T: 'a, O: 'a, F: LuaFn<'a, THIS, T, O>> RsFn<THIS, T, O, F> {
     pub const fn wrapper(&self) -> lua_CFunction {
-        // TODO:
-        // assert_eq!(core::mem::size_of::<F>(), 0);
+        assert!(core::mem::size_of::<F>() == 0);
         Some(F::wrapper)
     }
 }
 
-impl<'a, T, O, F: LuaFn<'a, (), T, O>> RsFn<(), T, O, F> {
+impl<'a, T: 'a, O: 'a, F: LuaFn<'a, (), T, O>> RsFn<(), T, O, F> {
     pub const fn new(f: F) -> Self {
         Self(f, PhantomData)
     }
@@ -459,7 +458,7 @@ impl<'a, T: ToLuaMulti> ToLua for BoxIter<'a, T> {
     }
 }
 
-impl<'a, THIS, T, O, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, T, O, F> {
+impl<'a, THIS: 'a, T: 'a, O: 'a, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, T, O, F> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
         if core::mem::size_of::<Self>() == 0 {
@@ -469,8 +468,16 @@ impl<'a, THIS, T, O, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, T, O, F> {
             let pfptr = &self;
             s.push_light_userdata(unsafe { *mem::transmute::<_, *const *mut ()>(pfptr) });
         } else {
-            // TODO: metatable __gc
+            unsafe extern "C" fn __gc<T>(l: *mut lua_State) -> i32 {
+                let s = State::from_ptr(l);
+                s.to_userdata_typed::<T>(1)
+                    .map(|p| core::ptr::drop_in_place(p));
+                return 0;
+            }
             s.push_userdatauv(self, 0);
+            let mt = s.table(0, 0);
+            mt.set("__gc", __gc::<Self> as CFunction);
+            s.set_metatable(-2);
         };
         s.push_cclosure(Some(F::wrapper), 1);
     }
@@ -900,7 +907,7 @@ macro_rules! impl_luafn {
             }
         }
 
-        impl<'a, FN: Fn(&State, $($x,)*)->RET + 'static, $($x: FromLua,)* RET: ToLuaMulti> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
+        impl<'a, FN: Fn(&State, $($x,)*)->RET + 'static, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
                 let s = State::from_ptr(l);
                 let f: &Self;
@@ -909,7 +916,7 @@ macro_rules! impl_luafn {
             }
         }
 
-        impl<'a, FN: Fn(THIS, &State, $($x,)*)->RET + 'static, THIS: FromLua, $($x: FromLua,)* RET: ToLuaMulti> LuaFn<'a, (), (THIS, State, $($x,)*), RET> for FN {
+        impl<'a, FN: Fn(THIS, &State, $($x,)*)->RET + 'static, THIS: FromLua+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (THIS, State, $($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
                 let s = State::from_ptr(l);
                 let f: &Self;
@@ -919,7 +926,7 @@ macro_rules! impl_luafn {
         }
 
         #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsRef<T>+'a, $($x: FromLua,)* RET: ToLuaMulti> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
+        impl<'a, FN: for<'r> Fn(&'r T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsRef<T>+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
                 let s = State::from_ptr(l);
                 let f: &Self;
@@ -930,7 +937,7 @@ macro_rules! impl_luafn {
         }
 
         #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua,)* RET: ToLuaMulti> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
+        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
                 let s = State::from_ptr(l);
                 let f: &Self;
@@ -973,7 +980,7 @@ impl State {
 
 impl ValRef<'_> {
     #[inline(always)]
-    pub fn register<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS, RET>(
+    pub fn register<'a, K: ToLua, V: LuaFn<'a, (), ARGS, RET>, ARGS: 'a, RET: 'a>(
         &self,
         k: K,
         v: V,
@@ -994,7 +1001,7 @@ where
     }
 
     #[inline]
-    pub fn register<K, V, ARGS, RET>(&self, k: K, v: V) -> &Self
+    pub fn register<K, V, ARGS: 'b, RET: 'b>(&self, k: K, v: V) -> &Self
     where
         K: ToLua,
         V: LuaFn<'b, (T, &'b D), ARGS, RET>,
@@ -1017,7 +1024,7 @@ where
     }
 
     #[inline]
-    pub fn register<K, V, ARGS, RET>(&self, k: K, v: V) -> &Self
+    pub fn register<K, V, ARGS: 'b, RET: 'b>(&self, k: K, v: V) -> &Self
     where
         K: ToLua,
         V: LuaFn<'b, (T, &'b mut D), ARGS, RET>,

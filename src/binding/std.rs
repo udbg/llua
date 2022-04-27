@@ -444,13 +444,8 @@ mod thread {
 
         fn getter(fields: &ValRef) {
             fields.register("handle", |this: &Self| this.handle as usize);
-            fields.register("name", |this: &Self| {
-                this.get().map(|j| {
-                    j.thread()
-                        .name()
-                        .map(ToString::to_string)
-                        .unwrap_or_default()
-                })
+            fields.register("name", |this: &'static Self| {
+                this.get().map(|j| j.thread().name())
             });
             fields.register("id", |this: &Self| {
                 this.get().map(|j| j.thread().id().as_u64().get())
