@@ -1,7 +1,7 @@
 [package]
 name = "llua"
-version = "0.1.0"
-edition = "2018"
+version = "0.1.1"
+edition = "2021"
 license = "MIT"
 authors = ["metaworm <metaworm@outlook.com>"]
 description = "Low level bindings to Lua5.4"
