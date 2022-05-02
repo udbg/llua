@@ -437,6 +437,10 @@ impl<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>> ToLua for IterMap<K, V, I> 
 }
 
 impl<'a, T: ToLuaMulti> BoxIter<'a, T> {
+    pub fn new(iter: impl Iterator<Item = T> + 'a) -> Self {
+        Self(Box::new(iter))
+    }
+
     unsafe extern "C" fn lua_fn(l: *mut lua_State) -> c_int {
         let s = State::from_ptr(l);
         let p = s.to_userdata(ffi::lua_upvalueindex(1));
@@ -449,12 +453,21 @@ impl<'a, T: ToLuaMulti> BoxIter<'a, T> {
     }
 }
 
+unsafe extern "C" fn __gc<T>(l: *mut lua_State) -> i32 {
+    let s = State::from_ptr(l);
+    s.to_userdata_typed::<T>(1)
+        .map(|p| core::ptr::drop_in_place(p));
+    return 0;
+}
+
 impl<'a, T: ToLuaMulti> ToLua for BoxIter<'a, T> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        type BoxIterT = BoxIter<'static, usize>;
-        s.push_userdata(self, Some(metatable!([s: State, this: BoxIterT])));
-        s.push_cclosure(Some(BoxIter::<'a, T>::lua_fn), 1);
+        s.push_userdata(self, None);
+        let mt = s.table(0, 1);
+        mt.set("__gc", __gc::<BoxIter<'static, usize>> as CFunction);
+        s.set_metatable(-2);
+        s.push_cclosure(Some(Self::lua_fn), 1);
     }
 }
 
@@ -468,14 +481,8 @@ impl<'a, THIS: 'a, T: 'a, O: 'a, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, 
             let pfptr = &self;
             s.push_light_userdata(unsafe { *mem::transmute::<_, *const *mut ()>(pfptr) });
         } else {
-            unsafe extern "C" fn __gc<T>(l: *mut lua_State) -> i32 {
-                let s = State::from_ptr(l);
-                s.to_userdata_typed::<T>(1)
-                    .map(|p| core::ptr::drop_in_place(p));
-                return 0;
-            }
             s.push_userdatauv(self, 0);
-            let mt = s.table(0, 0);
+            let mt = s.table(0, 1);
             mt.set("__gc", __gc::<Self> as CFunction);
             s.set_metatable(-2);
         };

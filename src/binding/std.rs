@@ -47,40 +47,30 @@ pub mod path {
         t.register("basename", Path::file_name);
         t.register("withext", Path::with_extension::<&str>);
         t.register("withfilename", Path::with_file_name::<&str>);
-        t.set(
-            "split",
-            cfn!(|s, path: &str| {
-                Path::new(path)
-                    .parent()
-                    .and_then(Path::to_str)
-                    .map(|dir| {
-                        let name = &path[dir.len()..];
-                        s.push(dir);
-                        s.push(name.trim_start_matches('\\'));
-                        2
-                    })
-                    .unwrap_or_default()
-            }),
-        );
-        t.set(
-            "splitext",
-            cfn!(|s, path: &str| {
-                Path::new(path)
-                    .extension()
-                    .and_then(OsStr::to_str)
-                    .map(|ext| {
-                        let p = &path[..path.len() - ext.len()];
-                        s.push(p.trim_end_matches('.'));
-                        s.push(ext);
-                        2
-                    })
-                    .unwrap_or_else(|| {
-                        s.push_value(1);
-                        s.push("");
-                        2
-                    })
-            }),
-        );
+        t.register("split", |path: &'static str| {
+            Path::new(path)
+                .parent()
+                .and_then(Path::to_str)
+                .map(|dir| {
+                    let name = &path[dir.len()..];
+                    (dir, name.trim_start_matches('\\'))
+                })
+                .unwrap_or_default()
+        });
+        t.register("splitext", |s: &State, path: &'static str| {
+            Path::new(path)
+                .extension()
+                .and_then(OsStr::to_str)
+                .map(|ext| {
+                    let p = &path[..path.len() - ext.len()];
+                    s.pushed((p.trim_end_matches('.'), ext))
+                })
+                .unwrap_or_else(|| {
+                    s.push_value(1);
+                    s.push("");
+                    Pushed(2)
+                })
+        });
         t.register("copy", std::fs::copy::<&str, &str>);
         t.register("rename", std::fs::rename::<&str, &str>);
         t.register("removedir", std::fs::remove_dir::<&str>);
@@ -89,21 +79,17 @@ pub mod path {
         // t.register("hardlink", std::fs::hard_link::<&str, &str>);
         t.register("readlink", Path::read_link);
         t.register("meta", Path::metadata);
-        t.set(
-            "join",
-            cfn!(|s, path: &Path| {
-                let mut buf = path.to_path_buf();
-                for i in 2..=s.get_top() {
-                    if let Some(n) = s.to_str(i) {
-                        buf = buf.join(n);
-                    } else {
-                        break;
-                    }
+        t.register("join", |s: &State, path: &Path| {
+            let mut buf = path.to_path_buf();
+            for i in 2..=s.get_top() {
+                if let Some(n) = s.to_str(i) {
+                    buf = buf.join(n);
+                } else {
+                    break;
                 }
-                s.push(buf.to_str());
-                1
-            }),
-        );
+            }
+            buf
+        });
         t.set("exepath", RsFn::new(std::env::current_exe));
     }
 
@@ -310,8 +296,8 @@ pub fn extend_os(s: &State) {
         use glob::glob;
         glob(pattern).map(|iter| {
             BoxIter(Box::new(
-                iter.filter_map(|e| e.ok())
-                    .filter_map(|path| path.to_str().map(|s| s.to_string())),
+                iter.filter_map(Result::ok)
+                    .map(|path| path.to_string_lossy().to_string()),
             ))
         })
     });
@@ -366,51 +352,46 @@ pub fn extend_string(s: &State) {
     s.get_global(cstr!("string"));
     let string = s.val(-1);
 
-    string.set(
-        "to_utf16",
-        cfn!(|s, t: &str| {
-            let mut r = t.encode_utf16().collect::<Vec<_>>();
-            r.push(0);
-            s.push(core::slice::from_raw_parts(
-                r.as_ptr() as *const u8,
-                r.len() * 2 - 1,
-            ));
-            1
-        }),
-    );
-    string.set(
-        "from_utf16",
-        cfn!(|s, t: &[u8]| push {
-            let u = core::slice::from_raw_parts(t.as_ptr() as *const u16, t.len() / 2);
-            String::from_utf16_lossy(u)
-        }),
-    );
-    string.set(
-        "starts_with",
-        cfn!(|s, t: &str, prefix: &str| push {
-            t.starts_with(prefix)
-        }),
-    );
-    string.set(
-        "ends_with",
-        cfn!(|s, t: &str, suffix: &str| push {
-            t.ends_with(suffix)
-        }),
-    );
-    string.set(
-        "equal",
-        cfn!(|s, t1: &str, t2: &str, case_sensitive: bool| push {
-            if case_sensitive { t1.eq(t2) } else { t1.eq_ignore_ascii_case(t2) }
-        }),
-    );
-    string.set(
+    impl FromLua for glob::Pattern {
+        fn check(s: &State, i: Index) -> Self {
+            s.check_result(glob::Pattern::new(s.args(i)))
+        }
+
+        fn from_lua(s: &State, i: Index) -> Option<Self> {
+            glob::Pattern::new(s.to_str(i)?).ok()
+        }
+    }
+
+    string.register("to_utf16", |s: &State, t: &str| unsafe {
+        let mut r = t.encode_utf16().collect::<Vec<_>>();
+        r.push(0);
+        s.pushed(core::slice::from_raw_parts(
+            r.as_ptr() as *const u8,
+            r.len() * 2 - 1,
+        ))
+    });
+    string.register("from_utf16", |t: &[u8]| unsafe {
+        let u = core::slice::from_raw_parts(t.as_ptr() as *const u16, t.len() / 2);
+        String::from_utf16_lossy(u)
+    });
+    string.register("starts_with", |t: &str, prefix: &str| t.starts_with(prefix));
+    string.register("ends_with", |t: &str, suffix: &str| t.ends_with(suffix));
+    string.register("equal", |t1: &str, t2: &str, case_sensitive: bool| {
+        if case_sensitive {
+            t1.eq(t2)
+        } else {
+            t1.eq_ignore_ascii_case(t2)
+        }
+    });
+    string.register(
         "wildmatch",
-        cfn!(|s, t1: &str, pattern: &str, case_sensitive: bool|? {
-            let pattern = glob::Pattern::new(pattern)?;
-            let options = glob::MatchOptions {case_sensitive, ..Default::default()};
-            s.push(pattern.matches_with(t1, options));
-            1
-        }),
+        |t1: &str, pattern: glob::Pattern, case_sensitive: bool| {
+            let options = glob::MatchOptions {
+                case_sensitive,
+                ..Default::default()
+            };
+            pattern.matches_with(t1, options)
+        },
     );
 }
 

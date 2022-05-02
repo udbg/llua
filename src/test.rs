@@ -42,6 +42,16 @@ fn userdata() {
     s.global().set("uv", uv);
     let test_value = 0x11223344;
     s.global().set("test", RsFn::new(move || test_value));
+    s.global().set("toiter", RsFn::new(|| BoxIter::new(0..3)));
+    s.do_string(
+        r#"
+        local iter = toiter()
+        assert(iter() == 0)
+        assert(iter() == 1)
+        assert(iter() == 2)
+    "#,
+    )
+    .chk_err(&s);
 
     s.do_string("assert(test() == 0x11223344)").chk_err(&s);
 
