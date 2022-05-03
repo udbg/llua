@@ -1067,14 +1067,8 @@ impl State {
     }
 
     /// Maps to `lua_getinfo`.
-    pub fn get_info(&self, what: &CStr) -> Option<lua_Debug> {
-        let mut ar: lua_Debug = unsafe { MaybeUninit::uninit().assume_init() };
-        let result = unsafe { lua_getinfo(self.0, what.as_ptr(), &mut ar) };
-        if result == 0 {
-            None
-        } else {
-            Some(ar)
-        }
+    pub fn get_info(&self, what: &CStr, ar: &mut lua_Debug) -> i32 {
+        unsafe { lua_getinfo(self.0, what.as_ptr(), ar) }
     }
 
     /// Maps to `lua_getlocal`.

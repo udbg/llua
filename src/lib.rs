@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(once_cell)]
 #![feature(const_type_name)]
 #![feature(thread_id_value)]
 #![feature(min_specialization)]
@@ -62,6 +63,8 @@ pub(crate) mod str {
 }
 
 mod convert;
+#[cfg(feature = "thread")]
+mod llua;
 mod lmacro;
 mod luaconf;
 mod serde;
@@ -77,3 +80,50 @@ pub use lmacro::*;
 pub use state::*;
 pub use util::*;
 pub use value::*;
+
+#[cfg(feature = "thread")]
+pub mod thread {
+    use super::*;
+    use parking_lot::Mutex;
+    use std::lazy::SyncLazy;
+
+    unsafe impl Send for State {}
+    unsafe impl Sync for State {}
+
+    pub static mut GLOBAL_LUA: SyncLazy<Mutex<State>> = SyncLazy::new(|| {
+        let state = State::new();
+        state.open_libs();
+        state.init_llua_global();
+        state.into()
+    });
+
+    #[derive(derive_more::Deref)]
+    pub struct TlsState(pub State);
+
+    impl TlsState {
+        fn new() -> TlsState {
+            unsafe {
+                let s = GLOBAL_LUA.lock();
+                let result = Self(s.new_thread());
+                s.push_value(-1);
+                s.raw_set(LUA_REGISTRYINDEX);
+                result
+            }
+        }
+    }
+
+    impl Drop for TlsState {
+        fn drop(&mut self) {
+            unsafe {
+                let s = GLOBAL_LUA.lock();
+                s.push_thread();
+                s.push_nil();
+                s.raw_set(LUA_REGISTRYINDEX);
+            }
+        }
+    }
+
+    std::thread_local! {
+        pub static LUA: TlsState = TlsState::new();
+    }
+}

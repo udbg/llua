@@ -601,6 +601,21 @@ pub fn init_global(s: &State) {
                 .unwrap_or_default()
         }),
     );
+    g.set(
+        "__file__",
+        RsFn::new(|s: &State| {
+            s.get_stack(1).and_then(|mut dbg| {
+                s.get_info(cstr!("S"), &mut dbg);
+                if dbg.source.is_null() {
+                    return None;
+                }
+                let src = unsafe { std::ffi::CStr::from_ptr(dbg.source) };
+                let src = src.to_string_lossy();
+                Some(src.strip_prefix("@").unwrap_or(&src).to_string())
+            })
+        })
+        .wrapper(),
+    );
     g.register("writefile", std::fs::write::<&std::path::Path, &[u8]>);
 }
 

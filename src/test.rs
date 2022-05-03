@@ -132,3 +132,12 @@ fn regex_binding() {
     )
     .chk_err(&s);
 }
+
+#[cfg(feature = "thread")]
+#[test]
+fn test_thread() {
+    let s = State::new();
+    s.open_libs();
+    s.init_llua_global();
+    s.do_file("tests/thread.lua").chk_err(&s);
+}
