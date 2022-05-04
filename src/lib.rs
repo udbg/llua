@@ -63,7 +63,7 @@ pub(crate) mod str {
 }
 
 mod convert;
-#[cfg(feature = "thread")]
+#[cfg(all(feature = "thread", feature = "vendored"))]
 mod llua;
 mod lmacro;
 mod luaconf;
@@ -83,7 +83,8 @@ pub use value::*;
 
 #[cfg(feature = "thread")]
 pub mod thread {
-    use super::*;
+    use super::{ffi::lua_State, *};
+    use core::cell::Cell;
     use parking_lot::Mutex;
     use std::lazy::SyncLazy;
 
@@ -98,24 +99,31 @@ pub mod thread {
     });
 
     #[derive(derive_more::Deref)]
-    pub struct TlsState(pub State);
+    pub struct TlsState(Cell<*mut lua_State>);
 
     impl TlsState {
         fn new() -> TlsState {
-            unsafe {
-                let s = GLOBAL_LUA.lock();
-                let result = Self(s.new_thread());
-                s.push_value(-1);
-                s.raw_set(LUA_REGISTRYINDEX);
-                result
+            Self(Cell::new(core::ptr::null_mut()))
+        }
+
+        fn get(&self) -> State {
+            if self.0.get().is_null() {
+                unsafe {
+                    let s = GLOBAL_LUA.lock();
+                    let t = s.new_thread();
+                    s.push_value(-1);
+                    s.raw_set(LUA_REGISTRYINDEX);
+                    self.0.set(t.as_ptr());
+                }
             }
+            unsafe { State::from_ptr(self.0.get()) }
         }
     }
 
     impl Drop for TlsState {
         fn drop(&mut self) {
-            unsafe {
-                let s = GLOBAL_LUA.lock();
+            if !self.0.get().is_null() {
+                let s = self.get();
                 s.push_thread();
                 s.push_nil();
                 s.raw_set(LUA_REGISTRYINDEX);
@@ -124,6 +132,10 @@ pub mod thread {
     }
 
     std::thread_local! {
-        pub static LUA: TlsState = TlsState::new();
+        static LUA: TlsState = TlsState::new();
+    }
+
+    pub fn state() -> State {
+        LUA.with(TlsState::get)
     }
 }

@@ -27,7 +27,7 @@ fn main() {
     add_files(&mut config, "lua-5.4.4", |n| {
         n.ends_with(".c") && !n.ends_with("lua.c") && !n.ends_with("luac.c")
     });
-    config.compile("lua");
+    config.compile("lua54");
 
     fn add_files(b: &mut cc::Build, dir: &str, cb: fn(&str) -> bool) {
         for entry in std::fs::read_dir(dir).unwrap() {
