@@ -982,13 +982,14 @@ impl Serialize for ValRef<'_> {
                 LUA_TFUNCTION => serializer.serialize_bool(true),
                 LUA_TBOOLEAN => serializer.serialize_bool(self.to_bool()),
                 LUA_TTABLE => {
-                    if self.state.raw_len(self.index) > 0 {
-                        let len = self.state.raw_len(self.index) as usize;
+                    let len = self.state.raw_len(self.index) as usize;
+                    if len > 0 {
                         let mut seq = serializer.serialize_seq(Some(len))?;
                         for i in 1..=len {
                             self.state.raw_geti(self.index, i as lua_Integer);
-                            seq.serialize_element(&self.state.val(-1))?;
+                            let res = seq.serialize_element(&self.state.val(-1));
                             self.state.pop(1);
+                            res?;
                         }
                         seq.end()
                     } else {
@@ -999,17 +1000,20 @@ impl Serialize for ValRef<'_> {
                             count += 1;
                             self.state.pop(1);
                         }
-                        // serialize
-                        let mut map = serializer.serialize_map(Some(count))?;
-                        self.state.push_nil();
-                        while lua_next(self.state.as_ptr(), self.index) != 0 {
-                            if let Err(_) =
-                                map.serialize_entry(&self.state.val(-2), &self.state.val(-1))
-                            {
+                        // serialize empty table as empty array
+                        if count == 0 {
+                            serializer.serialize_seq(Some(len))?.end()
+                        } else {
+                            let mut map = serializer.serialize_map(Some(count))?;
+                            self.state.push_nil();
+                            while lua_next(self.state.as_ptr(), self.index) != 0 {
+                                let res =
+                                    map.serialize_entry(&self.state.val(-2), &self.state.val(-1));
+                                self.state.pop(1);
+                                res?;
                             }
-                            self.state.pop(1);
+                            map.end()
                         }
-                        map.end()
                     }
                 }
                 _ => serializer.serialize_none(),
