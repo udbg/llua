@@ -86,12 +86,12 @@ pub mod thread {
     use super::{ffi::lua_State, *};
     use core::cell::Cell;
     use parking_lot::Mutex;
-    use std::lazy::SyncLazy;
+    use std::sync::LazyLock;
 
     unsafe impl Send for State {}
     unsafe impl Sync for State {}
 
-    pub static mut GLOBAL_LUA: SyncLazy<Mutex<State>> = SyncLazy::new(|| {
+    pub static mut GLOBAL_LUA: LazyLock<Mutex<State>> = LazyLock::new(|| {
         let state = State::new();
         state.open_libs();
         state.init_llua_global();
