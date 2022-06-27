@@ -1,18 +1,16 @@
 //! [serde](https://crates.io/crates/serde) utilities for lua
 
 use super::*;
-
 use crate::{ffi::*, FromLua, State, ToLua, Type, ValRef};
+use alloc::fmt::{self, Display};
+#[rustfmt::skip]
 use ::serde::{
-    de::{
-        Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor,
-    },
+    de::{Deserialize, DeserializeSeed, Deserializer, Error as DeErr, MapAccess, SeqAccess, Visitor},
     ser::{
-        Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
+        Error, Serialize, SerializeMap, SerializeSeq, SerializeStruct, SerializeStructVariant,
         SerializeTuple, SerializeTupleStruct, SerializeTupleVariant, Serializer,
     },
 };
-use alloc::fmt::{self, Display};
 
 #[derive(Clone, Debug, PartialEq, Display)]
 pub enum DesErr {
@@ -907,6 +905,11 @@ impl<'de> Visitor<'de> for LuaVisitor<'_> {
     where
         A: SeqAccess<'de>,
     {
+        self.0
+            .check_stack(3)
+            .then_some(())
+            .ok_or_else(|| A::Error::custom("stack not enough"))?;
+
         let size = seq.size_hint();
         self.0.create_table(size.unwrap_or_default() as _, 0);
 
@@ -931,6 +934,11 @@ impl<'de> Visitor<'de> for LuaVisitor<'_> {
     where
         A: MapAccess<'de>,
     {
+        self.0
+            .check_stack(3)
+            .then_some(())
+            .ok_or_else(|| A::Error::custom("stack not enough"))?;
+
         let size = map.size_hint();
         self.0.create_table(0, size.unwrap_or_default() as _);
 
@@ -979,10 +987,15 @@ impl Serialize for ValRef<'_> {
                         serializer.serialize_f64(self.state.to_number(self.index))
                     }
                 }
+                // TODO: serde option
                 LUA_TFUNCTION => serializer.serialize_bool(true),
                 LUA_TBOOLEAN => serializer.serialize_bool(self.to_bool()),
                 LUA_TTABLE => {
                     let len = self.state.raw_len(self.index) as usize;
+                    self.state
+                        .check_stack(3)
+                        .then_some(())
+                        .ok_or_else(|| S::Error::custom("stack not enough"))?;
                     if len > 0 {
                         let mut seq = serializer.serialize_seq(Some(len))?;
                         for i in 1..=len {
