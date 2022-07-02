@@ -970,7 +970,7 @@ impl Serialize for ValRef<'_> {
                 LUA_TSTRING => {
                     let bytes = self.state.to_bytes(self.index).unwrap_or_default();
                     // TODO:
-                    if bytes.len() > 300 {
+                    if bytes.len() > 0x1000 {
                         serializer.serialize_bytes(bytes)
                     } else {
                         match std::str::from_utf8(bytes) {
