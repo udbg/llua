@@ -293,8 +293,16 @@ pub fn extend_os(s: &State) {
     os.register("getexe", std::env::current_exe);
 
     os.register("glob", |pattern: &str| {
-        use glob::glob;
-        glob(pattern).map(|iter| {
+        use glob::MatchOptions;
+
+        glob::glob_with(
+            pattern,
+            MatchOptions {
+                case_sensitive: false,
+                ..MatchOptions::new()
+            },
+        )
+        .map(|iter| {
             BoxIter(Box::new(
                 iter.filter_map(Result::ok)
                     .map(|path| path.to_string_lossy().to_string()),
