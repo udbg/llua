@@ -1575,6 +1575,13 @@ impl State {
         self.val(-1)
     }
 
+    /// Register a metatable of UserData into the C registry
+    #[inline(always)]
+    pub fn register_usertype<U: UserData>(&self) {
+        self.get_or_init_metatable(U::init_metatable);
+        self.pop(1);
+    }
+
     #[inline(always)]
     pub fn push_userdatauv<T>(&self, data: T, n: i32) -> &mut T {
         let result: &mut T = unsafe { mem::transmute(self.new_userdatauv(mem::size_of::<T>(), n)) };
