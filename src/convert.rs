@@ -574,13 +574,13 @@ impl ToLua for Vec<u8> {
 ///
 /// It is important that implementors of this trait ensure that `from_lua`
 /// behaves like one of the `lua_to*` functions for consistency.
-pub trait FromLua: Sized {
+pub trait FromLua<'a>: Sized + 'a {
     const TYPE_NAME: &'static str = core::any::type_name::<Self>();
 
     /// Converts the value on top of the stack of a Lua state to a value of type
     /// `Option<Self>`.
-    fn from_lua(s: &State, i: Index) -> Option<Self>;
-    fn check(s: &State, i: Index) -> Self {
+    fn from_lua(s: &'a State, i: Index) -> Option<Self>;
+    fn check(s: &'a State, i: Index) -> Self {
         if let Some(result) = Self::from_lua(s, i) {
             result
         } else {
@@ -590,7 +590,7 @@ pub trait FromLua: Sized {
     }
 }
 
-impl FromLua for AnyVal {
+impl FromLua<'_> for AnyVal {
     #[inline(always)]
     fn from_lua(_s: &State, _i: Index) -> Option<AnyVal> {
         Some(AnyVal)
@@ -601,37 +601,38 @@ impl FromLua for AnyVal {
     }
 }
 
-impl FromLua for String {
+impl FromLua<'_> for String {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<String> {
         s.to_str(i).map(ToOwned::to_owned)
     }
 }
 
-impl FromLua for &str {
+impl<'a> FromLua<'a> for &'a str {
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<&'static str> {
+    fn from_lua(s: &'a State, i: Index) -> Option<&'a str> {
         s.to_str(i)
     }
 }
 
-impl FromLua for Vec<u8> {
+impl FromLua<'_> for Vec<u8> {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<Vec<u8>> {
         s.to_bytes(i).map(ToOwned::to_owned)
     }
 }
 
-impl FromLua for Value {
+impl<'a> FromLua<'a> for Value<'a> {
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<Value> {
+    fn from_lua(s: &'a State, i: Index) -> Option<Value<'a>> {
         Some(s.value(i))
     }
 }
 
-impl<'a> FromLua for &'a [u8] {
+impl<'a> FromLua<'a> for &'a [u8] {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<&'a [u8]> {
+        let s: &'a State = unsafe { core::mem::transmute(s) };
         s.to_bytes(i).or_else(|| unsafe {
             let p = s.to_userdata(i);
             if p.is_null() {
@@ -646,7 +647,7 @@ impl<'a> FromLua for &'a [u8] {
     }
 }
 
-impl<'a, T: UserData> FromLua for &'a T {
+impl<'a, T: UserData> FromLua<'a> for &'a T {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
 
     #[inline(always)]
@@ -661,7 +662,7 @@ impl<'a, T: UserData> FromLua for &'a T {
     }
 }
 
-impl<'a, T: UserData> FromLua for &'a mut T {
+impl<'a, T: UserData> FromLua<'a> for &'a mut T {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
 
     #[inline(always)]
@@ -676,28 +677,28 @@ impl<'a, T: UserData> FromLua for &'a mut T {
     }
 }
 
-impl FromLua for f64 {
+impl FromLua<'_> for f64 {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<f64> {
         s.to_numberx(i)
     }
 }
 
-impl FromLua for f32 {
+impl FromLua<'_> for f32 {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<f32> {
         s.to_numberx(i).map(|r| r as f32)
     }
 }
 
-impl FromLua for bool {
+impl FromLua<'_> for bool {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<bool> {
         Some(s.to_bool(i))
     }
 }
 
-impl FromLua for StrictBool {
+impl FromLua<'_> for StrictBool {
     fn from_lua(s: &State, i: Index) -> Option<StrictBool> {
         if s.is_bool(i) {
             Some(StrictBool(s.to_bool(i)))
@@ -707,9 +708,9 @@ impl FromLua for StrictBool {
     }
 }
 
-impl<T: FromLua> FromLua for Option<T> {
+impl<'a, T: FromLua<'a>> FromLua<'a> for Option<T> {
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<Option<T>> {
+    fn from_lua(s: &'a State, i: Index) -> Option<Option<T>> {
         Some(T::from_lua(s, i))
     }
 }
@@ -724,7 +725,7 @@ macro_rules! impl_integer {
             }
         }
 
-        impl FromLua for $t {
+        impl FromLua<'_> for $t {
             #[inline(always)]
             fn from_lua(s: &State, i: Index) -> Option<$t> {
                 if s.is_integer(i) {
@@ -737,7 +738,7 @@ macro_rules! impl_integer {
             }
         }
 
-        impl FromLua for StrictInt<$t> {
+        impl FromLua<'_> for StrictInt<$t> {
             #[inline(always)]
             fn from_lua(s: &State, i: Index) -> Option<StrictInt<$t>> {
                 if s.is_integer(i) {
@@ -757,14 +758,14 @@ pub trait ToLuaMulti: Sized {
     fn to_lua(self, _s: &State) -> c_int;
 }
 
-pub trait FromLuaMulti: Sized {
+pub trait FromLuaMulti<'a>: Sized {
     const COUNT: usize = 0;
-    fn from_lua(_s: &State, _begin: Index) -> Option<Self> {
+    fn from_lua(_s: &'a State, _begin: Index) -> Option<Self> {
         None
     }
 }
 
-impl FromLuaMulti for () {
+impl FromLuaMulti<'_> for () {
     const COUNT: usize = 0;
     fn from_lua(_s: &State, _begin: Index) -> Option<Self> {
         Some(())
@@ -813,11 +814,11 @@ impl ToLuaMulti for Option<Pushed> {
     }
 }
 
-impl<T: FromLua> FromLuaMulti for T {
+impl<'a, T: FromLua<'a>> FromLuaMulti<'a> for T {
     const COUNT: usize = 1;
 
     #[inline(always)]
-    fn from_lua(s: &State, begin: Index) -> Option<Self> {
+    fn from_lua(s: &'a State, begin: Index) -> Option<Self> {
         T::from_lua(s, begin)
     }
 }
@@ -862,11 +863,11 @@ macro_rules! impl_tuple {
             }
         }
 
-        impl<$($x,)*> FromLuaMulti for ($($x,)*) where $($x: FromLua,)* {
+        impl<'a, $($x,)*> FromLuaMulti<'a> for ($($x,)*) where $($x: FromLua<'a>,)* {
             const COUNT: usize = (count_tts!($($x)*));
 
             #[inline(always)]
-            fn from_lua(s: &State, begin: Index) -> Option<Self> {
+            fn from_lua(s: &'a State, begin: Index) -> Option<Self> {
                 Some(( $($x::from_lua(s, begin + $i)?,)* ))
             }
         }
@@ -905,52 +906,57 @@ macro_rules! getfn {
 
 macro_rules! impl_luafn {
     ($(($x:ident, $i:tt)) *) => (
-        impl<'a, FN: Fn($($x,)*)->RET + 'static, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (), ($($x,)*), RET> for FN {
+        impl<'a, FN: Fn($($x,)*)->RET + 'static, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = State::from_ptr(l);
+                let s = &State::from_ptr(l);
+                let s: &'a State = core::mem::transmute(s);
                 let f: &Self;
                 getfn!(s, f);
-                s.pushx(f($($x::check(&s, 1 + $i),)*))
+                s.pushx(f($($x::check(s, 1 + $i),)*))
             }
         }
 
-        impl<'a, FN: Fn(&State, $($x,)*)->RET + 'static, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
+        impl<'a, FN: Fn(&State, $($x,)*)->RET + 'static, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = State::from_ptr(l);
+                let s = &State::from_ptr(l);
+                let s: &'a State = core::mem::transmute(s);
                 let f: &Self;
                 getfn!(s, f);
-                s.pushx(f(&s, $($x::check(&s, 1 + $i),)*))
+                s.pushx(f(&s, $($x::check(s, 1 + $i),)*))
             }
         }
 
-        impl<'a, FN: Fn(THIS, &State, $($x,)*)->RET + 'static, THIS: FromLua+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (THIS, State, $($x,)*), RET> for FN {
+        impl<'a, FN: Fn(THIS, &State, $($x,)*)->RET + 'static, THIS: FromLua<'a>, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (THIS, State, $($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = State::from_ptr(l);
+                let s = &State::from_ptr(l);
+                let s: &'a State = core::mem::transmute(s);
                 let f: &Self;
                 getfn!(s, f);
-                s.pushx(f(THIS::check(&s, 1), &s, $($x::check(&s, 2 + $i),)*))
+                s.pushx(f(THIS::check(s, 1), &s, $($x::check(s, 2 + $i),)*))
             }
         }
 
         #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsRef<T>+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
+        impl<'a, FN: for<'r> Fn(&'r T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsRef<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = State::from_ptr(l);
+                let s = &State::from_ptr(l);
+                let s: &'a State = core::mem::transmute(s);
                 let f: &Self;
                 getfn!(s, f);
                 let this = <&THIS as FromLua>::check(&s, 1);
-                s.pushx(f(this.as_ref(), $($x::check(&s, 2 + $i),)*))
+                s.pushx(f(this.as_ref(), $($x::check(s, 2 + $i),)*))
             }
         }
 
         #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua+'a,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
+        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = State::from_ptr(l);
+                let s = &State::from_ptr(l);
+                let s: &'a State = core::mem::transmute(s);
                 let f: &Self;
                 getfn!(s, f);
                 let this = <&mut THIS as FromLua>::check(&s, 1);
-                s.pushx(f(this.as_mut(), $($x::check(&s, 2 + $i),)*))
+                s.pushx(f(this.as_mut(), $($x::check(s, 2 + $i),)*))
             }
         }
     );

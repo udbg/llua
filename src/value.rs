@@ -45,12 +45,12 @@ impl<'a> ValRef<'a> {
     }
 
     #[inline]
-    pub fn cast<T: FromLua>(&self) -> Option<T> {
+    pub fn cast<T: FromLua<'a>>(&'a self) -> Option<T> {
         self.state.arg(self.index)
     }
 
     #[inline]
-    pub fn check_cast<T: FromLua>(&self) -> T {
+    pub fn check_cast<T: FromLua<'a>>(&'a self) -> T {
         T::check(self.state, self.index)
     }
 
@@ -134,7 +134,7 @@ impl<'a> ValRef<'a> {
     }
 
     #[inline]
-    pub fn getopt<K: ToLua, V: FromLua>(&self, k: K) -> Option<V> {
+    pub fn getopt<K: ToLua, V: FromLua<'a>>(&self, k: K) -> Option<V> {
         self.get(k);
         let res = V::from_lua(self.state, -1);
         self.state.pop(1);
@@ -159,7 +159,7 @@ impl Coroutine {
     }
 }
 
-impl FromLua for Coroutine {
+impl FromLua<'_> for Coroutine {
     fn from_lua(s: &State, i: Index) -> Option<Self> {
         match s.type_of(i) {
             // maybe cause data race to self.0: lua_State*

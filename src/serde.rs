@@ -69,16 +69,16 @@ impl<T: Serialize> ToLua for SerdeValue<T> {
     }
 }
 
-impl<'a, T: Deserialize<'a>> FromLua for SerdeValue<T> {
+impl<'a, T: Deserialize<'a> + 'a> FromLua<'a> for SerdeValue<T> {
     #[inline(always)]
-    fn from_lua(s: &State, i: i32) -> Option<SerdeValue<T>> {
+    fn from_lua(s: &'a State, i: i32) -> Option<SerdeValue<T>> {
         Some(SerdeValue(T::deserialize(s.val(i)).ok()?))
     }
 }
 
-impl ValRef<'_> {
+impl<'a> ValRef<'a> {
     #[inline(always)]
-    pub fn deserialize<'a, T: Deserialize<'a>>(&self) -> Result<T, DesErr> {
+    pub fn deserialize<T: Deserialize<'a>>(&self) -> Result<T, DesErr> {
         T::deserialize(*self)
     }
 }
@@ -425,7 +425,7 @@ impl<'a> Serializer for LuaSerializer<'a> {
     // }
 }
 
-impl<'de> Deserializer<'de> for ValRef<'_> {
+impl<'de> Deserializer<'de> for ValRef<'de> {
     type Error = DesErr;
 
     /// Require the `Deserializer` to figure out how to drive the visitor based
@@ -694,7 +694,7 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     {
         struct SeqDes<'a>(ValRef<'a>, usize, usize);
 
-        impl<'de> SeqAccess<'de> for SeqDes<'_> {
+        impl<'de> SeqAccess<'de> for SeqDes<'de> {
             type Error = DesErr;
 
             #[inline]
@@ -752,7 +752,7 @@ impl<'de> Deserializer<'de> for ValRef<'_> {
     where
         V: Visitor<'de>,
     {
-        impl<'de> MapAccess<'de> for ValRef<'_> {
+        impl<'de> MapAccess<'de> for ValRef<'de> {
             type Error = DesErr;
 
             fn next_key_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>

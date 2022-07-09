@@ -93,9 +93,9 @@ pub mod path {
         t.set("exepath", RsFn::new(std::env::current_exe));
     }
 
-    impl<'a> FromLua for &'a Path {
+    impl<'a> FromLua<'a> for &'a Path {
         #[inline(always)]
-        fn from_lua(s: &State, i: Index) -> Option<&'a Path> {
+        fn from_lua(s: &'a State, i: Index) -> Option<&'a Path> {
             Path::new(s.to_str(i)?).into()
         }
     }
@@ -126,7 +126,7 @@ pub mod process {
         All,
     }
 
-    impl FromLua for ReadArg {
+    impl FromLua<'_> for ReadArg {
         fn from_lua(s: &State, i: Index) -> Option<Self> {
             if s.is_integer(i) {
                 Some(Self::Exact(s.args(i)))
@@ -139,7 +139,7 @@ pub mod process {
         }
     }
 
-    impl FromLua for Stdio {
+    impl FromLua<'_> for Stdio {
         fn from_lua(s: &State, i: Index) -> Option<Self> {
             Some(match <&str as FromLua>::from_lua(s, i)? {
                 "pipe" | "piped" => Stdio::piped(),
@@ -360,7 +360,7 @@ pub fn extend_string(s: &State) {
     s.get_global(cstr!("string"));
     let string = s.val(-1);
 
-    impl FromLua for glob::Pattern {
+    impl FromLua<'_> for glob::Pattern {
         fn check(s: &State, i: Index) -> Self {
             s.check_result(glob::Pattern::new(s.args(i)))
         }

@@ -54,7 +54,7 @@ pub enum ThreadStatus {
 }
 
 impl ThreadStatus {
-    fn from_c_int(i: c_int) -> ThreadStatus {
+    pub(crate) fn from_c_int(i: c_int) -> ThreadStatus {
         match i {
             LUA_OK => ThreadStatus::Ok,
             LUA_YIELD => ThreadStatus::Yield,
@@ -151,12 +151,13 @@ impl Type {
     }
 }
 
-pub enum Value {
+#[derive(Debug, Clone, Copy)]
+pub enum Value<'a> {
     None,
     Nil,
     Int(LUA_INTEGER),
     Num(LUA_NUMBER),
-    Str(&'static str),
+    Str(&'a str),
     Bool(bool),
     LightUserdata,
     Table,
@@ -455,12 +456,19 @@ impl State {
     }
 
     /// Maps to `lua_typename`.
-    pub fn typename_of(&self, tp: Type) -> &'static str {
+    #[inline(always)]
+    pub fn typename_of(&self, tp: Type) -> Cow<str> {
         unsafe {
             let ptr = lua_typename(self.0, tp as c_int);
             let slice = CStr::from_ptr(ptr).to_bytes();
-            str::from_utf8(slice).unwrap()
+            String::from_utf8_lossy(slice)
         }
+    }
+
+    /// Maps to `luaL_typename`.
+    #[inline(always)]
+    pub fn typename_at(&self, n: Index) -> Cow<str> {
+        self.typename_of(self.type_of(n))
     }
 
     /// Maps to `lua_toboolean`.
@@ -815,18 +823,6 @@ impl State {
     pub fn call(&self, nargs: c_int, nresults: c_int) {
         unsafe { lua_call(self.0, nargs, nresults) }
     }
-
-    /// Maps to `lua_pcallk`.
-    // pub fn pcallk<F>(&self, nargs: c_int, nresults: c_int, msgh: c_int, continuation: F) -> c_int
-    //     where F: FnOnce(&mut State, ThreadStatus) -> c_int
-    //     {
-    //         let func = continue_func::<F>;
-    //         unsafe {
-    //             let ctx = mem::transmute(Box::new(continuation));
-    //             // lua_pcallk only returns if no yield occurs, so call the continuation
-    //             func(self.0, lua_pcallk(self.0, nargs, nresults, msgh, ctx, Some(func)), ctx)
-    //         }
-    //     }
 
     /// Maps to `lua_pcall`.
     #[inline(always)]
@@ -1202,7 +1198,7 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn to_str(&self, index: Index) -> Option<&'static str> {
+    pub fn to_str<'a>(&'a self, index: Index) -> Option<&'a str> {
         self.to_bytes(index)
             .map(|r| unsafe { str::from_utf8_unchecked(r) })
     }
@@ -1210,7 +1206,7 @@ impl State {
     /// Maps to `lua_tolstring`, but allows arbitrary bytes.
     /// This function returns a reference to the string at the given index,
     /// on which `to_owned` may be called.
-    pub fn to_bytes(&self, index: Index) -> Option<&'static [u8]> {
+    pub fn to_bytes(&self, index: Index) -> Option<&[u8]> {
         let mut len = 0;
         let ptr = unsafe { lua_tolstring(self.0, index, &mut len) };
         if ptr.is_null() {
@@ -1517,11 +1513,6 @@ impl State {
     // omitted: luaL_checklong (use .check_integer)
     // omitted: luaL_optlong (use .opt_integer)
 
-    /// Maps to `luaL_typename`.
-    pub fn typename_at(&self, n: Index) -> &'static str {
-        self.typename_of(self.type_of(n))
-    }
-
     // luaL_dofile and luaL_dostring implemented above
 
     /// Maps to `luaL_getmetatable`.
@@ -1709,7 +1700,7 @@ impl State {
     }
 
     /// [-1, +1, -]
-    pub fn trace_error(&self, s: Option<&State>) -> &'static str {
+    pub fn trace_error(&self, s: Option<&State>) -> &str {
         let err = self.to_str(-1).unwrap_or("");
         self.pop(1);
         unsafe {
@@ -1720,12 +1711,12 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn arg<T: FromLua>(&self, index: Index) -> Option<T> {
+    pub fn arg<'a, T: FromLua<'a>>(&'a self, index: Index) -> Option<T> {
         T::from_lua(self, index)
     }
 
     #[inline(always)]
-    pub fn args<T: FromLuaMulti>(&self, index: Index) -> T {
+    pub fn args<'a, T: FromLuaMulti<'a>>(&'a self, index: Index) -> T {
         if let Some(args) = T::from_lua(self, index) {
             args
         } else {
@@ -1735,22 +1726,12 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn fargs<T: FromLuaMulti>(&self) -> T {
-        self.args::<T>(1)
-    }
-
-    #[inline(always)]
-    pub fn margs<T: FromLuaMulti>(&self) -> T {
-        self.args::<T>(2)
-    }
-
-    #[inline(always)]
     pub fn pushx<T: ToLuaMulti>(&self, t: T) -> c_int {
         t.to_lua(self)
     }
 
     #[inline(always)]
-    pub fn balance_with<T, F: FnOnce(&State) -> T>(&self, callback: F) -> T {
+    pub fn balance_with<'a, T: 'a, F: FnOnce(&'a State) -> T>(&'a self, callback: F) -> T {
         let top = self.get_top();
         let result = callback(self);
         self.set_top(top);
@@ -1809,8 +1790,8 @@ impl State {
 
     /// [-1, +0, -]
     #[inline(always)]
-    pub fn xpcall<T: ToLuaMulti, R: FromLuaMulti>(
-        &self,
+    pub fn xpcall<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
         msg: CFunction,
         args: T,
     ) -> Result<R, String> {
@@ -1830,7 +1811,10 @@ impl State {
     // tracebacked pcall
     /// [-1, +0, -]
     #[inline(always)]
-    pub fn pcall_trace<T: ToLuaMulti, R: FromLuaMulti>(&self, args: T) -> Result<R, String> {
+    pub fn pcall_trace<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
+        args: T,
+    ) -> Result<R, String> {
         self.xpcall(Self::traceback_c, args)
     }
 
