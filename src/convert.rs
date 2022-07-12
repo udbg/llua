@@ -1,9 +1,11 @@
 use super::*;
+use crate::error::Error;
 use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number, str::*};
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::fmt::Debug;
+use core::future::Future;
 use core::marker::PhantomData;
 use core::mem;
 use libc::c_int;
@@ -328,9 +330,18 @@ impl<'a, T: 'a, O: 'a, F: LuaFn<'a, (), T, O>> RsFn<(), T, O, F> {
 /// behaves like one of the `lua_push*` functions for consistency.
 pub trait ToLua {
     const IS_TOP: bool = false;
+    type Error: Debug + 'static = ();
 
     /// Pushes a value of type `Self` onto the stack of a Lua s.
     fn to_lua(self, s: &State);
+
+    /// Pushes a value of type `Self` onto the stack which maybe an error
+    fn to_lua_result(self, s: &State) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
+        Ok(ToLua::to_lua(self, s))
+    }
 }
 
 impl<'a> ToLua for () {
@@ -647,11 +658,21 @@ impl<'a> FromLua<'a> for &'a [u8] {
     }
 }
 
+pub struct ClonedUserData<T: UserData + Clone + 'static>(pub T);
+
+impl<T: UserData + Clone> FromLua<'_> for ClonedUserData<T> {
+    const TYPE_NAME: &'static str = T::TYPE_NAME;
+
+    fn from_lua(s: &State, i: Index) -> Option<Self> {
+        ClonedUserData(<&T as FromLua<'_>>::from_lua(s, i)?.clone()).into()
+    }
+}
+
 impl<'a, T: UserData> FromLua<'a> for &'a T {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
 
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<&'a T> {
+    fn from_lua(s: &'a State, i: Index) -> Option<&'a T> {
         unsafe {
             if T::IS_POINTER {
                 core::mem::transmute(*s.test_userdata_meta_::<*mut T>(i, T::init_metatable))
@@ -662,11 +683,12 @@ impl<'a, T: UserData> FromLua<'a> for &'a T {
     }
 }
 
+// TODO: safe mutable wrapper
 impl<'a, T: UserData> FromLua<'a> for &'a mut T {
     const TYPE_NAME: &'static str = T::TYPE_NAME;
 
     #[inline(always)]
-    fn from_lua(s: &State, i: Index) -> Option<&'a mut T> {
+    fn from_lua(s: &'a State, i: Index) -> Option<&'a mut T> {
         unsafe {
             if T::IS_POINTER {
                 core::mem::transmute(*s.test_userdata_meta_::<*mut T>(i, T::init_metatable))
@@ -756,6 +778,10 @@ impl_integer!(isize usize u8 u16 u32 u64 i8 i16 i32 Integer);
 
 pub trait ToLuaMulti: Sized {
     fn to_lua(self, _s: &State) -> c_int;
+
+    fn to_lua_result(self, s: &State) -> Result<c_int, Error> {
+        Ok(self.to_lua(s))
+    }
 }
 
 pub trait FromLuaMulti<'a>: Sized {
@@ -794,6 +820,12 @@ impl<T: ToLua> ToLuaMulti for T {
     default fn to_lua(self, s: &State) -> c_int {
         ToLua::to_lua(self, s);
         1
+    }
+
+    #[inline(always)]
+    default fn to_lua_result(self, s: &State) -> Result<c_int, Error> {
+        ToLua::to_lua_result(self, s).map_err(Error::convert)?;
+        Ok(1)
     }
 }
 
@@ -843,6 +875,83 @@ macro_rules! count_tts {
     ($($tts:tt)*) => {0usize $(+ replace_expr!($tts 1usize))*};
 }
 
+pub struct RetFuture<RET, F>(RET, F);
+
+macro_rules! getfn {
+    ($s:ident, $l:ident, $f:ident) => {
+        let $s: &'a State = core::mem::transmute(&State::from_ptr($l));
+        #[allow(unused_assignments)]
+        let mut pfn = core::mem::transmute(1usize);
+        let $f: &Self = if core::mem::size_of::<Self>() == 0 {
+            core::mem::transmute(pfn)
+        } else if core::mem::size_of::<Self>() == core::mem::size_of::<usize>() {
+            pfn = $s.to_userdata(ffi::lua_upvalueindex(1));
+            core::mem::transmute(&pfn)
+        } else {
+            pfn = $s.to_userdata(ffi::lua_upvalueindex(1));
+            core::mem::transmute(pfn)
+        };
+    };
+}
+
+macro_rules! impl_luafn {
+    ($(($x:ident, $i:tt)) *) => (
+        // For normal function
+        impl<'a, FN: Fn($($x,)*)->RET + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a> LuaFn<'a, (), ($($x,)*), RET> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                s.pushx(f($($x::check(s, 1 + $i),)*))
+            }
+        }
+
+        // For async function
+        impl<'a, FN: Fn($($x,)*)->RETF + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a, RETF: Future<Output = RET> + 'a> LuaFn<'a, (), ($($x,)*), RetFuture<RET, RETF>> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                s.yield_task(f($($x::check(s, 1 + $i),)*))
+            }
+        }
+
+        // For normal function which arg0 is &State
+        impl<'a, FN: Fn(&'a State, $($x,)*)->RET + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                s.pushx(f(s, $($x::check(s, 1 + $i),)*))
+            }
+        }
+
+        // For async function which arg0 is State
+        impl<'a, FN: Fn(State, $($x,)*)->RETF + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a, RETF: Future<Output = RET> + 'a> LuaFn<'a, (), (State, $($x,)*), RetFuture<RET, RETF>> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                s.yield_task(f(s.copy_state(), $($x::check(s, 1 + $i),)*))
+            }
+        }
+
+        // For AsRef<Self>
+        #[allow(unused_parens)]
+        impl<'a, FN: Fn(&'a T $(,$x)*)->RET, T: ?Sized + 'a, THIS: UserData+AsRef<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                let this = <&'a THIS as FromLua>::check(&s, 1);
+                s.pushx(f(this.as_ref(), $($x::check(s, 2 + $i),)*))
+            }
+        }
+
+        // For AsMut<Self>
+        #[allow(unused_parens)]
+        impl<'a, FN: Fn(&'a mut T $(,$x)*)->RET, T: ?Sized + 'a, THIS: UserData+AsMut<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
+            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
+                getfn!(s, l, f);
+                let this = <&'a mut THIS as FromLua>::check(&s, 1);
+                s.pushx(f(this.as_mut(), $($x::check(s, 2 + $i),)*))
+            }
+        }
+    );
+}
+
+impl_luafn!();
+
 macro_rules! impl_tuple {
     ($(($x:ident, $i:tt)) +) => (
         impl<$($x,)*> ToLuaMulti for ($($x,)*) where $($x: ToLua,)* {
@@ -850,6 +959,12 @@ macro_rules! impl_tuple {
             fn to_lua(self, s: &State) -> c_int {
                 $(s.push(self.$i);)*
                 (count_tts!($($x)*)) as _
+            }
+
+            #[inline(always)]
+            fn to_lua_result(self, s: &State) -> Result<c_int, Error> {
+                $(ToLua::to_lua_result(self.$i, s).map_err(Error::convert)?;)*
+                Ok((count_tts!($($x)*)) as _)
             }
         }
 
@@ -871,6 +986,8 @@ macro_rules! impl_tuple {
                 Some(( $($x::from_lua(s, begin + $i)?,)* ))
             }
         }
+
+        impl_luafn!($(($x, $i))+);
     );
 }
 
@@ -887,95 +1004,6 @@ impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9));
 impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10));
 impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11));
 impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11)(M, 12));
-
-macro_rules! getfn {
-    ($s:ident, $f:ident) => {
-        #[allow(unused_assignments)]
-        let mut pfn = core::mem::transmute(1usize);
-        if core::mem::size_of::<Self>() == core::mem::size_of::<usize>() {
-            pfn = $s.to_userdata(ffi::lua_upvalueindex(1));
-            $f = core::mem::transmute(&pfn)
-        } else if core::mem::size_of::<Self>() == 0 {
-            $f = core::mem::transmute(pfn);
-        } else {
-            pfn = $s.to_userdata(ffi::lua_upvalueindex(1));
-            $f = core::mem::transmute(pfn)
-        };
-    };
-}
-
-macro_rules! impl_luafn {
-    ($(($x:ident, $i:tt)) *) => (
-        impl<'a, FN: Fn($($x,)*)->RET + 'static, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), ($($x,)*), RET> for FN {
-            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = &State::from_ptr(l);
-                let s: &'a State = core::mem::transmute(s);
-                let f: &Self;
-                getfn!(s, f);
-                s.pushx(f($($x::check(s, 1 + $i),)*))
-            }
-        }
-
-        impl<'a, FN: Fn(&State, $($x,)*)->RET + 'static, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
-            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = &State::from_ptr(l);
-                let s: &'a State = core::mem::transmute(s);
-                let f: &Self;
-                getfn!(s, f);
-                s.pushx(f(&s, $($x::check(s, 1 + $i),)*))
-            }
-        }
-
-        impl<'a, FN: Fn(THIS, &State, $($x,)*)->RET + 'static, THIS: FromLua<'a>, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (THIS, State, $($x,)*), RET> for FN {
-            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = &State::from_ptr(l);
-                let s: &'a State = core::mem::transmute(s);
-                let f: &Self;
-                getfn!(s, f);
-                s.pushx(f(THIS::check(s, 1), &s, $($x::check(s, 2 + $i),)*))
-            }
-        }
-
-        #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsRef<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
-            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = &State::from_ptr(l);
-                let s: &'a State = core::mem::transmute(s);
-                let f: &Self;
-                getfn!(s, f);
-                let this = <&THIS as FromLua>::check(&s, 1);
-                s.pushx(f(this.as_ref(), $($x::check(s, 2 + $i),)*))
-            }
-        }
-
-        #[allow(unused_parens)]
-        impl<'a, FN: for<'r> Fn(&'r mut T $(,$x)*)->RET, T: ?Sized, THIS: UserData+AsMut<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
-            unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                let s = &State::from_ptr(l);
-                let s: &'a State = core::mem::transmute(s);
-                let f: &Self;
-                getfn!(s, f);
-                let this = <&mut THIS as FromLua>::check(&s, 1);
-                s.pushx(f(this.as_mut(), $($x::check(s, 2 + $i),)*))
-            }
-        }
-    );
-}
-
-impl_luafn!();
-impl_luafn!((A, 0));
-impl_luafn!((A, 0)(B, 1));
-impl_luafn!((A, 0)(B, 1)(C, 2));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11));
-impl_luafn!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(L, 11)(M, 12));
 
 impl State {
     #[inline(always)]

@@ -116,6 +116,23 @@ pub mod path {
     }
 }
 
+pub mod time {
+    use super::*;
+    use std::time::Duration;
+
+    impl FromLua<'_> for Duration {
+        fn from_lua(s: &State, i: Index) -> Option<Self> {
+            Some(match s.value(i) {
+                Value::Int(n) => Duration::from_secs(n as _),
+                Value::Num(n) => Duration::from_secs_f64(n),
+                // TODO: 1s 1ms 1ns
+                // Value::Str(_) => todo!(),
+                _ => return None,
+            })
+        }
+    }
+}
+
 pub mod process {
     use super::*;
     use std::io::{Read, Write};
@@ -501,8 +518,14 @@ mod thread {
             mt.register("wait", |s: &State, this: &'static Self, tm: Option<u64>| {
                 this.wait(s, tm).map(Pushed)
             });
-            mt.register("notify_one", LLuaCondVar::notify_one);
-            mt.register("notify_all", LLuaCondVar::notify_all);
+            mt.register("notify_one", |s: &State, this: &Self| {
+                this.push_some(s);
+                this.cvar.notify_one();
+            });
+            mt.register("notify_all", |s: &State, this: &Self| {
+                this.push_some(s);
+                this.cvar.notify_all();
+            });
         }
     }
 
@@ -512,16 +535,6 @@ mod thread {
             s.unreference(LUA_REGISTRYINDEX, (*i).into());
             s.push_value(2);
             *i = s.reference(LUA_REGISTRYINDEX).0;
-        }
-
-        fn notify_one(&self, s: &State) {
-            self.push_some(s);
-            self.cvar.notify_one();
-        }
-
-        fn notify_all(&self, s: &State) {
-            self.push_some(s);
-            self.cvar.notify_all();
         }
 
         fn wait<'a>(

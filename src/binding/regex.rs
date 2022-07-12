@@ -37,11 +37,11 @@ impl UserData for Regex {
         // https://docs.rs/regex/latest/regex/struct.Regex.html#method.find_iter
         mt.register("gmatch", |this: &'static Self, text: &'static str| {
             let iter = this.find_iter(text);
-            BoxIter(Box::new(iter.map(|m| (m.as_str(), m.start() + 1, m.end()))))
+            BoxIter::from(iter.map(|m| (m.as_str(), m.start() + 1, m.end())))
         });
         // https://docs.rs/regex/latest/regex/struct.Regex.html#method.split
         mt.register("gsplit", |this: &'static Self, text: &'static str| {
-            BoxIter(Box::new(this.split(text)))
+            BoxIter::from(this.split(text))
         });
         mt.register("split", |this: &'static Self, text: &'static str| {
             IterVec(this.split(text))

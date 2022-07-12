@@ -61,11 +61,17 @@ impl State {
 pub struct SerdeValue<T>(pub T);
 
 impl<T: Serialize> ToLua for SerdeValue<T> {
+    type Error = core::fmt::Error;
+
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        if let Err(err) = s.push_serialize(self.0) {
-            s.raise_error(err);
-        }
+        s.check_result(s.push_serialize(self.0));
+    }
+
+    #[inline(always)]
+    fn to_lua_result(self, s: &State) -> Result<(), Self::Error> {
+        s.push_serialize(self.0)?;
+        Ok(())
     }
 }
 

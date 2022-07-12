@@ -2,7 +2,9 @@
 #![feature(once_cell)]
 #![feature(const_type_name)]
 #![feature(thread_id_value)]
+#![feature(unboxed_closures)]
 #![feature(min_specialization)]
+#![feature(associated_type_defaults)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
@@ -62,6 +64,7 @@ pub(crate) mod str {
     }
 }
 
+mod r#async;
 mod convert;
 #[cfg(all(feature = "thread", feature = "vendored"))]
 mod llua;
@@ -77,6 +80,7 @@ mod value;
 pub use self::serde::*;
 pub use convert::*;
 pub use lmacro::*;
+pub use r#async::*;
 pub use state::*;
 pub use util::*;
 pub use value::*;
@@ -137,5 +141,29 @@ pub mod thread {
 
     pub fn state() -> State {
         LUA.with(TlsState::get)
+    }
+}
+
+pub mod error {
+    use alloc::boxed::Box;
+    use alloc::string::String;
+    use core::fmt::Debug;
+
+    #[derive(Debug, From)]
+    pub enum Error {
+        Runtime(String),
+        #[from(ignore)]
+        Convert(Box<dyn Debug>),
+        Else(Box<dyn Debug>),
+    }
+
+    impl Error {
+        pub fn from_debug<D: Debug + 'static>(dbg: D) -> Self {
+            Self::Else(Box::new(dbg))
+        }
+
+        pub fn convert<D: Debug + 'static>(dbg: D) -> Self {
+            Self::Convert(Box::new(dbg))
+        }
     }
 }

@@ -1751,12 +1751,12 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn raise_error(&self, e: impl alloc::fmt::Debug) -> ! {
-        self.error_string(format!("{:?}", e))
+    pub fn raise_error(&self, e: impl core::fmt::Debug) -> ! {
+        self.error_string(format!("{e:?}"))
     }
 
     #[inline(always)]
-    pub fn push_result(&self, r: Result<impl ToLua, impl alloc::fmt::Debug>, raise: bool) -> c_int {
+    pub fn push_result(&self, r: Result<impl ToLua, impl core::fmt::Debug>, raise: bool) -> c_int {
         match r {
             Ok(v) => {
                 self.push(v);
@@ -1775,7 +1775,7 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn check_result<T>(&self, r: Result<T, impl alloc::fmt::Debug>) -> T {
+    pub fn check_result<T>(&self, r: Result<T, impl core::fmt::Debug>) -> T {
         match r {
             Ok(v) => v,
             Err(e) => self.raise_error(e),

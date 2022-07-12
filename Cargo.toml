@@ -29,5 +29,8 @@ serde = {version = '1.0', default-features = false, features = ['rc', 'derive']}
 corepack = {version = '0.4', default-features = false, features = ['alloc']}
 cstrptr = {version = '0.1.2', default-features = false, features = ['alloc']}
 
+[dev-dependencies]
+tokio = {version = '1.4', features = ["net", "time", "macros", "rt"]}
+
 [build-dependencies]
 cc = '1'
