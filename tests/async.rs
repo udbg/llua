@@ -7,7 +7,7 @@ async fn llua_async() {
     s.init_llua_global();
 
     let g = s.global();
-    g.register("echo_async", |n: i32| async move { (0, n) });
+    g.register("echo_async", |s: State, n: i32| async move { s.pushed((0, n)) });
     g.register("sleep_async", tokio::time::sleep);
     s.load_string(
         "

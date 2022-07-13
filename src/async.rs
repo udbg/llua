@@ -22,6 +22,7 @@ impl State {
         loop {
             match state.resume(Some(self), nres, &mut nres) {
                 ThreadStatus::Yield => {
+                    assert_eq!(nres, 1);
                     let task = state
                         .arg::<&mut TaskWrapper>(-1)
                         .expect("coroutine task expect a TaskWrapper")
@@ -29,8 +30,18 @@ impl State {
                         .take()
                         .expect("task moved");
                     state.pop(1);
+                    let top = state.get_top();
                     nres = Box::into_pin(task).await?;
-                    std::println!("nres: {nres}");
+                    // std::println!("nres: {nres}");
+                    let delta = state.get_top() - top - nres;
+                    if delta > 0 {
+                        state.rotate(top, -delta);
+                        state.pop(delta);
+                    } else {
+                        for _ in 0..-delta {
+                            state.push_nil();
+                        }
+                    }
                 }
                 ThreadStatus::Ok => return Ok(nres),
                 err => {
