@@ -784,6 +784,10 @@ pub trait ToLuaMulti: Sized {
     }
 }
 
+// TODO:
+// Conversion of returned values to type of ToLuaMulti is unsafe, because the values was removed on the stack,
+// but the results maybe still have the reference to lua, which will be free by the GC.
+// In the future, FromLuaMulti should be renamed to FromLuaOwned, without lifetime params, it always should be static
 pub trait FromLuaMulti<'a>: Sized {
     const COUNT: usize = 0;
     fn from_lua(_s: &'a State, _begin: Index) -> Option<Self> {
@@ -855,13 +859,18 @@ impl<'a, T: FromLua<'a>> FromLuaMulti<'a> for T {
     }
 }
 
-impl<T: ToLuaMulti, E: Debug> ToLuaMulti for Result<T, E> {
+impl<T: ToLuaMulti, E: Debug + 'static> ToLuaMulti for Result<T, E> {
     #[inline(always)]
     fn to_lua(self, s: &State) -> c_int {
         match self {
             Ok(val) => val.to_lua(s),
             Err(e) => s.raise_error(e),
         }
+    }
+
+    #[inline(always)]
+    fn to_lua_result(self, s: &State) -> Result<c_int, Error> {
+        self.map(|val| val.to_lua(s)).map_err(Error::from_debug)
     }
 }
 

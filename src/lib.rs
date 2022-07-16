@@ -154,6 +154,7 @@ pub mod error {
         Runtime(String),
         #[from(ignore)]
         Convert(Box<dyn Debug>),
+        ConvertFailed,
         Else(Box<dyn Debug>),
     }
 
@@ -164,6 +165,10 @@ pub mod error {
 
         pub fn convert<D: Debug + 'static>(dbg: D) -> Self {
             Self::Convert(Box::new(dbg))
+        }
+
+        pub fn runtime<S: Into<String>>(s: S) -> Self {
+            Self::Runtime(s.into())
         }
     }
 }

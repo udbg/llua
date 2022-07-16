@@ -11,29 +11,51 @@ impl UserData for TaskWrapper<'_> {
 }
 
 impl State {
-    pub async fn call_async(&self) -> Result<i32, Error> {
-        assert_eq!(self.type_of(-1), Type::Function);
+    #[inline(always)]
+    pub async fn call_async<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
+        args: T,
+    ) -> Result<R, Error> {
+        let count = R::COUNT as i32;
+        self.raw_call_async(self.pushx(args), count).await?;
+        let deferred = defer_lite::Defer::new(|| self.pop(count));
+        R::from_lua(self, self.abs_index(-count)).ok_or(Error::ConvertFailed)
+    }
+
+    pub async fn raw_call_async(&self, mut nargs: i32, nresult: i32) -> Result<i32, Error> {
+        assert!(nargs >= 0 && nresult >= 0);
+        assert_eq!(self.type_of(-1 - nargs), Type::Function);
 
         let state = self.new_thread();
-        self.insert(-2);
-        self.xmove(&state, 1);
+        self.insert(-2 - nargs);
+        self.xmove(&state, 1 + nargs);
 
-        let mut nres = 0;
+        let top = self.get_top() - 1;
+        // pop state
+        let deferred = defer_lite::Defer::new(|| self.set_top(top));
+
         loop {
-            match state.resume(Some(self), nres, &mut nres) {
+            let mut nres = nresult;
+            match state.resume(Some(self), nargs, &mut nres) {
                 ThreadStatus::Yield => {
                     assert_eq!(nres, 1);
                     let task = state
                         .arg::<&mut TaskWrapper>(-1)
-                        .expect("coroutine task expect a TaskWrapper")
+                        .ok_or("coroutine task expect a TaskWrapper")
+                        .map_err(Error::runtime)?
                         .0
                         .take()
-                        .expect("task moved");
+                        .ok_or("task is already moved")
+                        .map_err(Error::runtime)?;
+                    // pop the TaskWrapper
                     state.pop(1);
+
+                    // execute the task
                     let top = state.get_top();
-                    nres = Box::into_pin(task).await?;
-                    // std::println!("nres: {nres}");
-                    let delta = state.get_top() - top - nres;
+                    nargs = Box::into_pin(task).await?;
+
+                    // keep the last nargs elements in stack
+                    let delta = state.get_top() - top - nargs;
                     if delta > 0 {
                         state.rotate(top, -delta);
                         state.pop(delta);
@@ -43,12 +65,19 @@ impl State {
                         }
                     }
                 }
-                ThreadStatus::Ok => return Ok(nres),
-                err => {
+                ThreadStatus::Ok => {
+                    drop(deferred);
+                    state.xmove(self, nres);
+                    self.set_top(top + nresult);
+                    return Ok(nresult);
+                }
+                err => unsafe {
+                    let l = state.as_ptr();
+                    ffi::luaL_traceback(l, l, state.to_string(-1), 0);
                     return Err(Error::Runtime(
                         state.to_str(-1).unwrap_or_default().to_string(),
-                    ))
-                }
+                    ));
+                },
             }
         }
     }
