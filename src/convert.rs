@@ -10,13 +10,33 @@ use core::marker::PhantomData;
 use core::mem;
 use libc::c_int;
 
+/// Represents a reference in the C registry of lua
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CRegRef(pub i32);
+
+/// Represents a referenced value in the C registry of lua
+#[derive(Debug, PartialEq, Eq)]
+pub struct CRegVal<'a> {
+    pub state: &'a State,
+    index: CRegRef,
+}
+
+/// Represents a nil value
 pub struct NilVal;
+
+/// Represents any typed value for placeorder purpose
 pub struct AnyVal;
+
+/// A special value, represents the value on the stack top
 pub struct TopVal;
-pub struct StrictBool(pub bool);
-pub struct StrictInt<I>(pub I);
+
+/// Represents a strict typed value, such as an integer value
+#[derive(Clone, Copy)]
+pub struct Strict<I>(pub I);
+
+/// Represents a strict typed boolean value
+pub type StrictBool = Strict<bool>;
+
 pub struct IterVec<T: ToLua, I: Iterator<Item = T>>(pub I);
 pub struct IterMap<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>>(pub I);
 pub struct BoxIter<'a, T>(pub Box<dyn Iterator<Item = T> + 'a>);
@@ -38,6 +58,25 @@ impl From<i32> for Pushed {
     #[inline(always)]
     fn from(n: i32) -> Self {
         Self(n)
+    }
+}
+
+impl From<CRegRef> for Reference {
+    fn from(r: CRegRef) -> Self {
+        Self(r.0)
+    }
+}
+
+impl CRegVal<'_> {
+    #[inline(always)]
+    pub fn creg_ref(&self) -> CRegRef {
+        self.index
+    }
+}
+
+impl Drop for CRegVal<'_> {
+    fn drop(&mut self) {
+        self.state.unreference(LUA_REGISTRYINDEX, self.index.into());
     }
 }
 
@@ -529,6 +568,17 @@ impl ToLua for CRegRef {
     }
 }
 
+impl ToLua for CRegVal<'_> {
+    #[inline(always)]
+    fn to_lua(self, s: &State) {
+        assert_eq!(
+            s.to_pointer(LUA_REGISTRYINDEX),
+            self.state.to_pointer(LUA_REGISTRYINDEX)
+        );
+        ToLua::to_lua(self, s)
+    }
+}
+
 impl ToLua for StackRef {
     #[inline(always)]
     fn to_lua(self, s: &State) {
@@ -640,6 +690,18 @@ impl<'a> FromLua<'a> for Value<'a> {
     }
 }
 
+impl<'a> FromLua<'a> for CRegVal<'a> {
+    #[inline(always)]
+    fn from_lua(s: &'a State, i: Index) -> Option<CRegVal<'a>> {
+        s.push_value(i);
+        let r = s.reference(LUA_REGISTRYINDEX);
+        Some(Self {
+            state: s,
+            index: CRegRef(r.0),
+        })
+    }
+}
+
 impl<'a> FromLua<'a> for &'a [u8] {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<&'a [u8]> {
@@ -723,7 +785,7 @@ impl FromLua<'_> for bool {
 impl FromLua<'_> for StrictBool {
     fn from_lua(s: &State, i: Index) -> Option<StrictBool> {
         if s.is_bool(i) {
-            Some(StrictBool(s.to_bool(i)))
+            Some(Strict(s.to_bool(i)))
         } else {
             None
         }
@@ -760,9 +822,9 @@ macro_rules! impl_integer {
             }
         }
 
-        impl FromLua<'_> for StrictInt<$t> {
+        impl FromLua<'_> for Strict<$t> {
             #[inline(always)]
-            fn from_lua(s: &State, i: Index) -> Option<StrictInt<$t>> {
+            fn from_lua(s: &State, i: Index) -> Option<Strict<$t>> {
                 if s.is_integer(i) {
                     Some(Self(s.to_integer(i) as $t))
                 } else {

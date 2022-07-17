@@ -1,7 +1,7 @@
 //! [serde](https://crates.io/crates/serde) utilities for lua
 
 use super::*;
-use crate::{ffi::*, FromLua, State, ToLua, Type, ValRef};
+use crate::{ffi::*, CRegVal, FromLua, State, ToLua, Type, ValRef};
 use alloc::fmt::{self, Display};
 #[rustfmt::skip]
 use ::serde::{
@@ -1038,5 +1038,14 @@ impl Serialize for ValRef<'_> {
                 _ => serializer.serialize_none(),
             }
         }
+    }
+}
+
+impl Serialize for CRegVal<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.state.balance_with(|s| {
+            s.push(self.creg_ref());
+            s.val(-1).serialize(serializer)
+        })
     }
 }

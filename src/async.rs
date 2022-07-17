@@ -72,8 +72,7 @@ impl State {
                     return Ok(nresult);
                 }
                 err => unsafe {
-                    let l = state.as_ptr();
-                    ffi::luaL_traceback(l, l, state.to_string(-1), 0);
+                    ffi::luaL_traceback(self.as_ptr(), state.as_ptr(), state.to_string(-1), 0);
                     return Err(Error::Runtime(
                         state.to_str(-1).unwrap_or_default().to_string(),
                     ));

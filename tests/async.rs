@@ -4,7 +4,6 @@ use llua::*;
 async fn llua_async() {
     let s = State::new();
     s.open_libs();
-    s.init_llua_global();
 
     let g = s.global();
     g.register(
@@ -16,6 +15,7 @@ async fn llua_async() {
     s.load_string(
         "
         print(echo_async(...))
+        -- error 'error test'
         sleep_async(1)
         print(echo_async(2))
         print(echo_async(3))
