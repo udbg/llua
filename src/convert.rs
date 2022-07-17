@@ -948,9 +948,10 @@ macro_rules! count_tts {
 
 pub struct RetFuture<RET, F>(RET, F);
 
-macro_rules! getfn {
+macro_rules! wrapper_init {
     ($s:ident, $l:ident, $f:ident) => {
-        let $s: &'a State = core::mem::transmute(&State::from_ptr($l));
+        let s = &State::from_ptr($l);
+        let $s: &'a State = core::mem::transmute(s);
         #[allow(unused_assignments)]
         let mut pfn = core::mem::transmute(1usize);
         let $f: &Self = if core::mem::size_of::<Self>() == 0 {
@@ -970,7 +971,7 @@ macro_rules! impl_luafn {
         // For normal function
         impl<'a, FN: Fn($($x,)*)->RET + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a> LuaFn<'a, (), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 s.pushx(f($($x::check(s, 1 + $i),)*))
             }
         }
@@ -978,7 +979,7 @@ macro_rules! impl_luafn {
         // For async function
         impl<'a, FN: Fn($($x,)*)->RETF + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a, RETF: Future<Output = RET> + 'a> LuaFn<'a, (), ($($x,)*), RetFuture<RET, RETF>> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 s.yield_task(f($($x::check(s, 1 + $i),)*))
             }
         }
@@ -986,7 +987,7 @@ macro_rules! impl_luafn {
         // For normal function which arg0 is &State
         impl<'a, FN: Fn(&'a State, $($x,)*)->RET + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (), (State, $($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 s.pushx(f(s, $($x::check(s, 1 + $i),)*))
             }
         }
@@ -994,7 +995,7 @@ macro_rules! impl_luafn {
         // For async function which arg0 is State
         impl<'a, FN: Fn(State, $($x,)*)->RETF + 'a, $($x: FromLua<'a>,)* RET: ToLuaMulti + 'a, RETF: Future<Output = RET> + 'a> LuaFn<'a, (), (State, $($x,)*), RetFuture<RET, RETF>> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 s.yield_task(f(s.copy_state(), $($x::check(s, 1 + $i),)*))
             }
         }
@@ -1003,7 +1004,7 @@ macro_rules! impl_luafn {
         #[allow(unused_parens)]
         impl<'a, FN: Fn(&'a T $(,$x)*)->RET, T: ?Sized + 'a, THIS: UserData+AsRef<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 let this = <&'a THIS as FromLua>::check(&s, 1);
                 s.pushx(f(this.as_ref(), $($x::check(s, 2 + $i),)*))
             }
@@ -1013,7 +1014,7 @@ macro_rules! impl_luafn {
         #[allow(unused_parens)]
         impl<'a, FN: Fn(&'a mut T $(,$x)*)->RET, T: ?Sized + 'a, THIS: UserData+AsMut<T>+'a, $($x: FromLua<'a>,)* RET: ToLuaMulti+'a> LuaFn<'a, (THIS, &'a mut T), ($($x,)*), RET> for FN {
             unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-                getfn!(s, l, f);
+                wrapper_init!(s, l, f);
                 let this = <&'a mut THIS as FromLua>::check(&s, 1);
                 s.pushx(f(this.as_mut(), $($x::check(s, 2 + $i),)*))
             }
