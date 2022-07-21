@@ -11,24 +11,20 @@ async fn llua_async() {
         |s: State, n: i32| async move { s.pushed((0, n)) },
     );
     g.register("sleep_async", tokio::time::sleep);
-    let top = s.get_top();
-    s.load_string(
+
+    let co = Coroutine::empty(&s);
+    co.load_string(
         "
         print(echo_async(...))
         -- error 'error test'
-        sleep_async(1)
+        sleep_async(0.2)
         print(echo_async(2))
         print(echo_async(3))
         return 1, 2
     ",
-    );
+    )
+    .unwrap();
 
-    // let n = 2;
-    // let res = s.raw_call_async(s.pushx(333), n).await.unwrap();
-    // assert_eq!(res, n);
-    // let ret = s.args::<(i32, i32)>(-2);
-    // assert_eq!(ret, (1, 2));
-
-    let ret = s.call_async::<_, (i32, i32)>(333).await.unwrap();
+    let ret = co.call_async::<_, (i32, i32)>(333, None).await.unwrap();
     assert_eq!(ret, (1, 2));
 }

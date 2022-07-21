@@ -148,14 +148,21 @@ pub struct Coroutine(State);
 unsafe impl Send for Coroutine {}
 
 impl Coroutine {
-    pub fn with_fn(s: &State, i: Index) -> Coroutine {
-        s.check_type(i, Type::Function);
-        let ns = s.new_thread();
-        s.push_value(i);
-        s.xmove(&ns, 1);
+    // [-0, +0]
+    pub fn empty(s: &State) -> Self {
+        let result = s.new_thread();
         assert!(s.type_of(-1) == Type::Thread);
-        s.raw_setp(LUA_REGISTRYINDEX, ns.as_ptr());
-        Coroutine(ns)
+        s.raw_setp(LUA_REGISTRYINDEX, result.as_ptr());
+        Self(result)
+    }
+
+    pub fn with_fn(s: &State, i: Index) -> Self {
+        s.check_type(i, Type::Function);
+
+        let result = Self::empty(s);
+        s.push_value(i);
+        s.xmove(&result, 1);
+        result
     }
 }
 

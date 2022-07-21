@@ -11,75 +11,17 @@ impl UserData for TaskWrapper<'_> {
 }
 
 impl State {
-    #[inline(always)]
-    pub async fn call_async<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
-        &'a self,
-        args: T,
-    ) -> Result<R, Error> {
-        let count = R::COUNT as i32;
-        self.raw_call_async(self.pushx(args), count).await?;
-        let deferred = defer_lite::Defer::new(|| self.pop(count));
-        R::from_lua(self, self.abs_index(-count)).ok_or(Error::ConvertFailed)
-    }
-
-    pub async fn raw_call_async(&self, mut nargs: i32, nresult: i32) -> Result<i32, Error> {
-        assert!(nargs >= 0 && nresult >= 0);
-        assert_eq!(self.type_of(-1 - nargs), Type::Function);
-
-        let state = self.new_thread();
-        self.insert(-2 - nargs);
-        self.xmove(&state, 1 + nargs);
-
-        let top = self.get_top() - 1;
-        // pop state
-        let deferred = defer_lite::Defer::new(|| self.set_top(top));
-
-        loop {
-            let mut nres = nresult;
-            match state.resume(Some(self), nargs, &mut nres) {
-                ThreadStatus::Yield => {
-                    assert_eq!(nres, 1);
-                    let task = state
-                        .arg::<&mut TaskWrapper>(-1)
-                        .ok_or("coroutine task expect a TaskWrapper")
-                        .map_err(Error::runtime)?
-                        .0
-                        .take()
-                        .ok_or("task is already moved")
-                        .map_err(Error::runtime)?;
-                    // pop the TaskWrapper
-                    state.pop(1);
-
-                    // execute the task
-                    let top = state.get_top();
-                    nargs = Box::into_pin(task).await?;
-
-                    // keep the last nargs elements in stack
-                    let delta = state.get_top() - top - nargs;
-                    if delta > 0 {
-                        state.rotate(top, -delta);
-                        state.pop(delta);
-                    } else {
-                        for _ in 0..-delta {
-                            state.push_nil();
-                        }
-                    }
-                }
-                ThreadStatus::Ok => {
-                    drop(deferred);
-                    state.xmove(self, nres);
-                    self.set_top(top + nresult);
-                    return Ok(nresult);
-                }
-                err => unsafe {
-                    ffi::luaL_traceback(self.as_ptr(), state.as_ptr(), state.to_string(-1), 0);
-                    return Err(Error::Runtime(
-                        state.to_str(-1).unwrap_or_default().to_string(),
-                    ));
-                },
-            }
-        }
-    }
+    // #[inline(always)]
+    // pub async fn call_async<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+    //     &self,
+    //     args: T,
+    // ) -> Result<R, Error> {
+    //     let co = Coroutine::with_fn(self, -1);
+    //     // TODO: Coroutine with lifetime
+    //     // TODO: FromLuaOwned
+    //     let co: &'a Coroutine = unsafe { core::mem::transmute(&co) };
+    //     co.call_async::<T, R>(args, Some(self)).await
+    // }
 
     #[inline(always)]
     pub(crate) fn yield_task<'a, RET: ToLuaMulti, F: Future<Output = RET> + 'a>(
@@ -127,6 +69,73 @@ impl State {
         let ctx = Box::into_raw(continuation.into()) as _;
         unsafe { ffi::lua_yieldk(self.as_ptr(), nresults, ctx, Some(continue_func::<F>)) };
         panic!("co_yieldk called in non-coroutine context; check is_yieldable first")
+    }
+}
+
+impl Coroutine {
+    #[inline(always)]
+    pub async fn call_async<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
+        args: T,
+        from: Option<&State>,
+    ) -> Result<R, Error> {
+        let count = R::COUNT as i32;
+        self.raw_call_async(from, self.pushx(args), count).await?;
+        R::from_lua(self, self.abs_index(-count)).ok_or(Error::ConvertFailed)
+    }
+
+    pub async fn raw_call_async(
+        &self,
+        from: Option<&State>,
+        mut nargs: i32,
+        nresult: i32,
+    ) -> Result<i32, Error> {
+        assert!(nargs >= 0 && nresult >= 0);
+
+        let top = self.get_top() - nargs;
+        loop {
+            let mut nres = nresult;
+            match self.resume(from, nargs, &mut nres) {
+                ThreadStatus::Yield => {
+                    assert_eq!(nres, 1);
+                    let task = self
+                        .arg::<&mut TaskWrapper>(-1)
+                        .ok_or("coroutine task expect a TaskWrapper")
+                        .map_err(Error::runtime)?
+                        .0
+                        .take()
+                        .ok_or("task is already moved")
+                        .map_err(Error::runtime)?;
+                    // pop the TaskWrapper
+                    self.pop(1);
+
+                    // execute the task
+                    let top = self.get_top();
+                    nargs = Box::into_pin(task).await?;
+
+                    // keep the last nargs elements in stack
+                    let delta = self.get_top() - top - nargs;
+                    if delta > 0 {
+                        self.rotate(top, -delta);
+                        self.pop(delta);
+                    } else {
+                        for _ in 0..-delta {
+                            self.push_nil();
+                        }
+                    }
+                }
+                ThreadStatus::Ok => {
+                    // at the end, function in coroutine was also poped
+                    self.set_top(top - 1 + nresult);
+                    return Ok(nresult);
+                }
+                err => {
+                    return Err(Error::Runtime(
+                        self.to_str(-1).unwrap_or_default().to_string(),
+                    ));
+                }
+            }
+        }
     }
 }
 
