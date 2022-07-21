@@ -3,6 +3,7 @@ use crate::error::Error;
 use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number, str::*};
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use core::future::Future;
@@ -1079,6 +1080,62 @@ impl_tuple!((A, 0)(B, 1)(C, 2)(D, 3)(E, 4)(F, 5)(G, 6)(H, 7)(I, 8)(J, 9)(K, 10)(
 
 impl State {
     #[inline(always)]
+    pub fn arg<'a, T: FromLua<'a>>(&'a self, index: Index) -> Option<T> {
+        T::from_lua(self, index)
+    }
+
+    #[inline(always)]
+    pub fn args<'a, T: FromLuaMulti<'a>>(&'a self, index: Index) -> T {
+        if let Some(args) = T::from_lua(self, index) {
+            args
+        } else {
+            self.push_string("args not match");
+            self.error();
+        }
+    }
+
+    #[inline(always)]
+    pub fn pushx<T: ToLuaMulti>(&self, t: T) -> c_int {
+        t.to_lua(self)
+    }
+
+    /// [-1, +0, -]
+    #[inline(always)]
+    pub fn xpcall<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
+        msg: CFunction,
+        args: T,
+    ) -> Result<R, String> {
+        let i = self.get_top();
+        self.push_fn(Some(msg));
+        // FIXME:
+        self.insert(i);
+        let r = match self.pcall(self.pushx(args), R::COUNT as i32, i) {
+            ThreadStatus::Ok => R::from_lua(self, self.abs_index(-(R::COUNT as i32)))
+                .ok_or("<type not match>".to_string()),
+            _ => Err(self.to_str(-1).unwrap_or("<error>").to_string()),
+        };
+        self.set_top(i - 1);
+        r
+    }
+
+    // tracebacked pcall
+    /// [-1, +0, -]
+    #[inline(always)]
+    pub fn pcall_trace<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a self,
+        args: T,
+    ) -> Result<R, String> {
+        self.xpcall(Self::traceback_c, args)
+    }
+
+    /// Pushes the given value onto the stack.
+    #[inline(always)]
+    pub fn push<T: ToLua>(&self, value: T) {
+        value.to_lua(self);
+    }
+
+    #[inline(always)]
     pub fn pushed<T: ToLuaMulti>(&self, t: T) -> Pushed {
         Pushed(self.pushx(t))
     }
@@ -1088,6 +1145,49 @@ impl State {
     pub fn metatable<U: UserData>(&self) -> ValRef {
         self.get_or_init_metatable(U::init_metatable);
         self.val(-1)
+    }
+
+    /// [-0, +(0|2), –]
+    #[inline(always)]
+    pub fn get_metatable_by<T: ToLua>(&self, i: Index, k: T) -> Type {
+        if self.get_metatable(i) {
+            self.push(k);
+            self.raw_get(-2)
+        } else {
+            Type::None
+        }
+    }
+
+    #[inline(always)]
+    pub fn setglobal<T: ToLua>(&self, var: &CStr, v: T) {
+        self.push(v);
+        unsafe { lua_setglobal(self.as_ptr(), var.as_ptr()) }
+    }
+
+    /// [-0, +0, -]
+    #[inline(always)]
+    pub fn creg_ref(&self, val: impl ToLua) -> CRegRef {
+        val.to_lua(self);
+        unsafe { CRegRef(luaL_ref(self.as_ptr(), LUA_REGISTRYINDEX)) }
+    }
+
+    #[inline(always)]
+    pub fn push_result(&self, r: Result<impl ToLua, impl core::fmt::Debug>, raise: bool) -> c_int {
+        match r {
+            Ok(v) => {
+                self.push(v);
+                1
+            }
+            Err(e) => {
+                if raise {
+                    self.raise_error(e);
+                } else {
+                    self.push(false);
+                    self.push_string(&format!("{:?}", e));
+                    2
+                }
+            }
+        }
     }
 }
 

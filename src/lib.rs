@@ -153,6 +153,13 @@ pub mod error {
     pub enum Error {
         Runtime(String),
         #[from(ignore)]
+        Memory(String),
+        #[from(ignore)]
+        Syntax(String),
+        #[from(ignore)]
+        Gc(String),
+        Yield,
+        #[from(ignore)]
         Convert(Box<dyn Debug>),
         ConvertFailed,
         Else(Box<dyn Debug>),

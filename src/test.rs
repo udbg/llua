@@ -51,21 +51,21 @@ fn userdata() {
         assert(iter() == 2)
     "#,
     )
-    .chk_err(&s);
+    .unwrap();
 
-    s.do_string("assert(test() == 0x11223344)").chk_err(&s);
+    s.do_string("assert(test() == 0x11223344)").unwrap();
 
     s.do_string("print(getmetatable(uv), type(uv))");
-    s.do_string("assert(uv.a == 0)").chk_err(&s);
-    s.do_string("uv:inc(); assert(uv.a == 1)").chk_err(&s);
-    s.do_string("uv.a = 3; assert(uv.a == 3)").chk_err(&s);
+    s.do_string("assert(uv.a == 0)").unwrap();
+    s.do_string("uv:inc(); assert(uv.a == 1)").unwrap();
+    s.do_string("uv.a = 3; assert(uv.a == 3)").unwrap();
 
     let test = Rc::new(Test { a: 123 });
     s.global().set("uv", test.clone());
     s.global().set("uv1", test.clone());
     s.do_string("print(uv, uv1)");
-    s.do_string("assert(uv == uv1)").chk_err(&s);
-    s.do_string("assert(uv.a == 123)").chk_err(&s);
+    s.do_string("assert(uv == uv1)").unwrap();
+    s.do_string("assert(uv.a == 123)").unwrap();
 }
 
 #[test]
@@ -90,7 +90,12 @@ fn serde() {
     global.set("test", SerdeValue(test.clone()));
     s.do_string("print(test)");
     let t = global.getopt::<_, SerdeValue<Test>>("test").unwrap().0;
-    assert_eq!(test, t)
+    assert_eq!(test, t);
+
+    global.set("test", 1234);
+    let t = global.getopt::<_, CRegVal>("test").unwrap();
+    global.set("test", SerdeValue(t));
+    s.do_string("print('regval', test)").unwrap();
 }
 
 #[test]
@@ -109,7 +114,7 @@ fn binding() {
         assert(meta:is_file())
     ",
     )
-    .chk_err(&s);
+    .unwrap();
 }
 
 #[no_mangle]
@@ -130,7 +135,7 @@ fn regex_binding() {
         assert(cap[2] == 'def')
     ",
     )
-    .chk_err(&s);
+    .unwrap();
 }
 
 #[cfg(feature = "thread")]
@@ -139,5 +144,5 @@ fn test_thread() {
     let s = State::new();
     s.open_libs();
     s.init_llua_global();
-    s.do_file("tests/thread.lua").chk_err(&s);
+    s.do_file("tests/thread.lua").unwrap();
 }

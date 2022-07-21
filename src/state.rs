@@ -1,10 +1,10 @@
-use super::*;
+use super::error::Error;
+use super::ValRef;
+use super::{ffi::*, str::*, Index, UserData};
 
-use crate::convert::{FromLua, FromLuaMulti, ToLua, ToLuaMulti};
-use crate::{ffi::*, str::*};
-
+use alloc::borrow::Cow;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::{mem, ptr, slice, str};
@@ -40,7 +40,6 @@ pub enum Comparison {
 }
 
 /// Status of a Lua state.
-#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadStatus {
     Ok = LUA_OK as isize,
@@ -312,23 +311,17 @@ impl State {
     }
 
     /// Maps to `luaL_dofile`.
-    pub fn do_file(&self, filename: &str) -> ThreadStatus {
+    pub fn do_file(&self, filename: &str) -> Result<(), Error> {
         let c_str = CString::new(filename).unwrap();
         let result = unsafe { luaL_dofile(self.0, c_str.as_ptr()) };
-        ThreadStatus::from_c_int(result)
+        self.to_error(ThreadStatus::from_c_int(result))
     }
 
     /// Maps to `luaL_dostring`.
-    pub fn do_string(&self, s: &str) -> ThreadStatus {
+    pub fn do_string(&self, s: &str) -> Result<(), Error> {
         let c_str = CString::new(s).unwrap();
         let result = unsafe { luaL_dostring(self.0, c_str.as_ptr()) };
-        ThreadStatus::from_c_int(result)
-    }
-
-    /// Pushes the given value onto the stack.
-    #[inline(always)]
-    pub fn push<T: ToLua>(&self, value: T) {
-        value.to_lua(self);
+        self.to_error(ThreadStatus::from_c_int(result))
     }
 
     //===========================================================================
@@ -704,17 +697,6 @@ impl State {
         result != 0
     }
 
-    /// [-0, +(0|2), –]
-    #[inline(always)]
-    pub fn get_metatable_by<T: ToLua>(&self, i: Index, k: T) -> Type {
-        if self.get_metatable(i) {
-            self.push(k);
-            self.raw_get(-2)
-        } else {
-            Type::None
-        }
-    }
-
     /// Maps to `lua_getuservalue`.
     #[inline(always)]
     pub fn get_uservalue(&self, idx: Index) -> Type {
@@ -735,12 +717,6 @@ impl State {
     /// Maps to `lua_setglobal`.
     #[inline(always)]
     pub fn set_global(&self, var: &CStr) {
-        unsafe { lua_setglobal(self.0, var.as_ptr()) }
-    }
-
-    #[inline(always)]
-    pub fn setglobal<T: ToLua>(&self, var: &CStr, v: T) {
-        self.push(v);
         unsafe { lua_setglobal(self.0, var.as_ptr()) }
     }
 
@@ -1350,24 +1326,24 @@ impl State {
     }
 
     /// Maps to `luaL_loadfilex`.
-    pub fn load_filex(&self, filename: &str, mode: &str) -> ThreadStatus {
+    pub fn load_filex(&self, filename: &str, mode: &str) -> Result<(), Error> {
         let result = unsafe {
             let filename_c_str = CString::new(filename).unwrap();
             let mode_c_str = CString::new(mode).unwrap();
             luaL_loadfilex(self.0, filename_c_str.as_ptr(), mode_c_str.as_ptr())
         };
-        ThreadStatus::from_c_int(result)
+        self.to_error(ThreadStatus::from_c_int(result))
     }
 
     /// Maps to `luaL_loadfile`.
-    pub fn load_file(&self, filename: &str) -> ThreadStatus {
+    pub fn load_file(&self, filename: &str) -> Result<(), Error> {
         let c_str = CString::new(filename).unwrap();
         let result = unsafe { luaL_loadfile(self.0, c_str.as_ptr()) };
-        ThreadStatus::from_c_int(result)
+        self.to_error(ThreadStatus::from_c_int(result))
     }
 
     /// Maps to `luaL_loadbufferx`.
-    pub fn load_bufferx(&self, buff: &[u8], name: &str, mode: &str) -> ThreadStatus {
+    pub fn load_bufferx(&self, buff: &[u8], name: &str, mode: &str) -> Result<(), Error> {
         let name_c_str = CString::new(name).unwrap();
         let mode_c_str = CString::new(mode).unwrap();
         let result = unsafe {
@@ -1379,14 +1355,34 @@ impl State {
                 mode_c_str.as_ptr(),
             )
         };
-        ThreadStatus::from_c_int(result)
+        self.to_error(ThreadStatus::from_c_int(result))
+    }
+
+    fn to_error(&self, ts: ThreadStatus) -> Result<(), Error> {
+        match ts {
+            ThreadStatus::Ok => Ok(()),
+            ThreadStatus::Yield => Err(Error::Yield),
+            _ => {
+                let err = self.to_str(-1).unwrap_or_default().to_string();
+                match ts {
+                    ThreadStatus::RuntimeError | ThreadStatus::MessageHandlerError => {
+                        Err(Error::runtime(err))
+                    }
+                    ThreadStatus::GcError => Err(Error::Gc(err)),
+                    ThreadStatus::SyntaxError => Err(Error::Syntax(err)),
+                    ThreadStatus::MemoryError => Err(Error::Memory(err)),
+                    ThreadStatus::FileError => Err(Error::runtime(err)),
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 
     /// Maps to `luaL_loadstring`.
-    pub fn load_string(&self, source: &str) -> ThreadStatus {
+    pub fn load_string(&self, source: &str) -> Result<(), Error> {
         let c_str = CString::new(source).unwrap();
         let result = unsafe { luaL_loadstring(self.0, c_str.as_ptr()) };
-        ThreadStatus::from_c_int(result)
+        self.to_error(ThreadStatus::from_c_int(result))
     }
 
     /// Maps to `lua_dump`.
@@ -1542,13 +1538,6 @@ impl State {
     #[inline(always)]
     pub fn c_reg(&self) -> ValRef {
         self.val(LUA_REGISTRYINDEX)
-    }
-
-    /// [-0, +0, -]
-    #[inline(always)]
-    pub fn creg_ref(&self, val: impl ToLua) -> CRegRef {
-        val.to_lua(self);
-        unsafe { CRegRef(luaL_ref(self.0, LUA_REGISTRYINDEX)) }
     }
 
     /// [-0, +1, -]
@@ -1711,26 +1700,6 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn arg<'a, T: FromLua<'a>>(&'a self, index: Index) -> Option<T> {
-        T::from_lua(self, index)
-    }
-
-    #[inline(always)]
-    pub fn args<'a, T: FromLuaMulti<'a>>(&'a self, index: Index) -> T {
-        if let Some(args) = T::from_lua(self, index) {
-            args
-        } else {
-            self.push_string("args not match");
-            self.error();
-        }
-    }
-
-    #[inline(always)]
-    pub fn pushx<T: ToLuaMulti>(&self, t: T) -> c_int {
-        t.to_lua(self)
-    }
-
-    #[inline(always)]
     pub fn balance_with<'a, T: 'a, F: FnOnce(&'a State) -> T>(&'a self, callback: F) -> T {
         let top = self.get_top();
         let result = callback(self);
@@ -1756,25 +1725,6 @@ impl State {
     }
 
     #[inline(always)]
-    pub fn push_result(&self, r: Result<impl ToLua, impl core::fmt::Debug>, raise: bool) -> c_int {
-        match r {
-            Ok(v) => {
-                self.push(v);
-                1
-            }
-            Err(e) => {
-                if raise {
-                    self.raise_error(e);
-                } else {
-                    self.push(false);
-                    self.push_string(&format!("{:?}", e));
-                    2
-                }
-            }
-        }
-    }
-
-    #[inline(always)]
     pub fn check_result<T>(&self, r: Result<T, impl core::fmt::Debug>) -> T {
         match r {
             Ok(v) => v,
@@ -1782,40 +1732,10 @@ impl State {
         }
     }
 
-    pub unsafe extern "C" fn traceback_c(l: *mut ffi::lua_State) -> i32 {
+    pub unsafe extern "C" fn traceback_c(l: *mut lua_State) -> i32 {
         let s = State::from_ptr(l);
-        ffi::luaL_traceback(l, l, s.to_string(1), 1);
+        luaL_traceback(l, l, s.to_string(1), 1);
         1
-    }
-
-    /// [-1, +0, -]
-    #[inline(always)]
-    pub fn xpcall<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
-        &'a self,
-        msg: CFunction,
-        args: T,
-    ) -> Result<R, String> {
-        let i = self.get_top();
-        self.push_fn(Some(msg));
-        // FIXME:
-        self.insert(i);
-        let r = match self.pcall(self.pushx(args), R::COUNT as i32, i) {
-            ThreadStatus::Ok => R::from_lua(self, self.abs_index(-(R::COUNT as i32)))
-                .ok_or("<type not match>".to_string()),
-            _ => Err(self.to_str(-1).unwrap_or("<error>").to_string()),
-        };
-        self.set_top(i - 1);
-        r
-    }
-
-    // tracebacked pcall
-    /// [-1, +0, -]
-    #[inline(always)]
-    pub fn pcall_trace<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
-        &'a self,
-        args: T,
-    ) -> Result<R, String> {
-        self.xpcall(Self::traceback_c, args)
     }
 
     pub fn value(&self, i: Index) -> Value {
