@@ -614,14 +614,11 @@ pub fn init_global(s: &State) {
     thread::init(s);
 
     let g = s.global();
-    g.set(
-        "readfile",
-        cfn!(|s, path: &str| {
-            std::fs::read(path)
-                .map(|data| s.pushx(data.as_slice()))
-                .unwrap_or_default()
-        }),
-    );
+    g.register("readfile", |path: &str| {
+        std::fs::read(path)
+            .map(serde_bytes::ByteBuf::from)
+            .unwrap_or_default()
+    });
     g.set(
         "__file__",
         RsFn::new(|s: &State| {

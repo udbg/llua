@@ -38,11 +38,18 @@ pub struct Strict<I>(pub I);
 /// Represents a strict typed boolean value
 pub type StrictBool = Strict<bool>;
 
+/// Represents an iterator will be converted to a lua array table
 pub struct IterVec<T: ToLua, I: Iterator<Item = T>>(pub I);
+
+/// Represents an iterator will be converted to a lua table
 pub struct IterMap<K: ToLua, V: ToLua, I: Iterator<Item = (K, V)>>(pub I);
+
+/// Represents an iterator
 pub struct BoxIter<'a, T>(pub Box<dyn Iterator<Item = T> + 'a>);
-// pub struct RsClosure<T, O, F>(pub F, PhantomData<T>, PhantomData<O>);
+
+/// Represents a function will be wrapped as a lua C function
 pub struct RsFn<THIS, T, O, F>(pub F, PhantomData<(THIS, T, O)>);
+
 pub struct UserDataWrapper<T>(pub T, pub Option<InitMetatable>);
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Pushed(pub i32);
@@ -344,6 +351,18 @@ impl<T: UserData> ToLua for *mut T {
         } else {
             s.push_nil();
         }
+    }
+}
+
+impl ToLua for &serde_bytes::Bytes {
+    fn to_lua(self, s: &State) {
+        s.push_bytes(self);
+    }
+}
+
+impl ToLua for serde_bytes::ByteBuf {
+    fn to_lua(self, s: &State) {
+        s.push_bytes(&self);
     }
 }
 
