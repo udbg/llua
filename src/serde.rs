@@ -51,12 +51,41 @@ impl DeErr for DesErr {
 }
 
 impl State {
+    /// convert a serializable value into a lua value
     #[inline(always)]
     pub fn push_serialize<V: Serialize>(&self, v: V) -> Result<(), core::fmt::Error> {
         v.serialize(LuaSerializer(self))
     }
+
+    /// transcode a serializable value from deserializer into a lua value
+    #[inline(always)]
+    pub fn push_from_deserializer<'de, D: Deserializer<'de>>(
+        &self,
+        deserializer: D,
+    ) -> Result<(), core::fmt::Error> {
+        serde_transcode::transcode(deserializer, LuaSerializer(self))
+    }
 }
 
+/// Represents a value from deserializer will be converted to lua
+pub struct FromDeserializer<D>(pub D);
+
+impl<'de, D: Deserializer<'de>> ToLua for FromDeserializer<D> {
+    type Error = core::fmt::Error;
+
+    #[inline(always)]
+    fn to_lua(self, s: &State) {
+        s.check_result(s.push_from_deserializer(self.0));
+    }
+
+    #[inline(always)]
+    fn to_lua_result(self, s: &State) -> Result<(), Self::Error> {
+        s.push_from_deserializer(self.0)?;
+        Ok(())
+    }
+}
+
+/// Wrapper to serializable value
 #[derive(Copy, Clone, Deref, DerefMut)]
 pub struct SerdeValue<T>(pub T);
 
@@ -83,9 +112,16 @@ impl<'a, T: Deserialize<'a> + 'a> FromLua<'a> for SerdeValue<T> {
 }
 
 impl<'a> ValRef<'a> {
+    /// deserialize a lua value
     #[inline(always)]
     pub fn deserialize<T: Deserialize<'a>>(&self) -> Result<T, DesErr> {
         T::deserialize(*self)
+    }
+
+    /// transcode a lua value to another serialize format
+    #[inline(always)]
+    pub fn transcode<S: Serializer>(self, serializer: S) -> Result<S::Ok, S::Error> {
+        serde_transcode::transcode(self, serializer)
     }
 }
 

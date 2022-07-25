@@ -1,32 +1,4 @@
-pub use corepack;
-
-use crate::{serde::*, *};
-use ::serde::Deserializer;
-use corepack::{error, read};
-
-pub struct LLuaMsgPack<'a>(pub &'a [u8]);
-
-impl<'a> ToLua for LLuaMsgPack<'a> {
-    #[inline(always)]
-    fn to_lua(self, s: &State) {
-        push_corepack(s, self.0)
-    }
-}
-
-fn push_corepack(s: &State, bytes: &[u8]) {
-    let mut position: usize = 0;
-    let r = read::BorrowRead::new(|len: usize| {
-        if position + len > bytes.len() {
-            Err(error::Error::EndOfStream)
-        } else {
-            let result = &bytes[position..position + len];
-            position += len;
-            Ok(result)
-        }
-    });
-    let mut der = corepack::Deserializer::new(r);
-    der.deserialize_any(LuaVisitor(s)).unwrap();
-}
+use crate::*;
 
 impl State {
     pub fn to_ffi_pointer(&self, i: Index) -> Option<usize> {
