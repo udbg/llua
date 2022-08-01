@@ -114,6 +114,13 @@ pub mod path {
             ToLua::to_lua(self.as_path(), s);
         }
     }
+
+    impl FromLua<'_> for PathBuf {
+        #[inline(always)]
+        fn from_lua(s: &State, i: Index) -> Option<Self> {
+            Path::new(s.to_str(i)?).to_path_buf().into()
+        }
+    }
 }
 
 pub mod time {
