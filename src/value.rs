@@ -1,7 +1,8 @@
-use crate::{str::*, *};
-
-pub use crate::ffi::{
-    lua_Alloc, lua_CFunction, lua_Hook, lua_Integer, lua_Number, CFunction, LUA_REGISTRYINDEX,
+use crate::{
+    error::Error,
+    ffi::{lua_Integer, lua_Number, LUA_REGISTRYINDEX},
+    str::CStr,
+    FromLua, FromLuaMulti, Reference, State, ThreadStatus, ToLua, ToLuaMulti, Type,
 };
 pub type Index = i32;
 
@@ -52,6 +53,11 @@ impl<'a> ValRef<'a> {
     #[inline]
     pub fn check_cast<T: FromLua<'a>>(&'a self) -> T {
         T::check(self.state, self.index)
+    }
+
+    pub fn raw_geti(&self, i: impl Into<lua_Integer>) -> ValRef {
+        self.state.raw_geti(self.index, i.into());
+        self.state.val(-1)
     }
 
     pub fn geti(&self, i: impl Into<lua_Integer>) -> ValRef {
@@ -142,8 +148,51 @@ impl<'a> ValRef<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Value<'a> {
+    None,
+    Nil,
+    Int(lua_Integer),
+    Num(lua_Number),
+    Str(&'a str),
+    Bool(bool),
+    LightUserdata,
+    Table,
+    Function,
+    Userdata,
+    Thread,
+}
+
+impl State {
+    pub fn value(&self, i: Index) -> Value {
+        match self.type_of(i) {
+            Type::None => Value::None,
+            Type::Nil => Value::Nil,
+            Type::Number => {
+                if self.is_integer(i) {
+                    Value::Int(self.to_integer(i))
+                } else {
+                    Value::Num(self.to_number(i))
+                }
+            }
+            Type::String => Value::Str(self.to_str(i).unwrap()),
+            Type::Boolean => Value::Bool(self.to_bool(i)),
+            Type::LightUserdata => Value::LightUserdata,
+            Type::Table => Value::Table,
+            Type::Function => Value::Function,
+            Type::Userdata => Value::Userdata,
+            Type::Thread => Value::Thread,
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(Deref)]
-pub struct Coroutine(State);
+pub struct Coroutine {
+    #[deref]
+    pub(crate) state: State,
+    nres: i32,
+}
 
 unsafe impl Send for Coroutine {}
 
@@ -152,8 +201,15 @@ impl Coroutine {
     pub fn empty(s: &State) -> Self {
         let result = s.new_thread();
         assert!(s.type_of(-1) == Type::Thread);
-        s.raw_setp(LUA_REGISTRYINDEX, result.as_ptr());
-        Self(result)
+        let result = Self::new(result);
+        s.pop(1);
+        result
+    }
+
+    fn new(s: State) -> Self {
+        s.push_thread();
+        s.raw_setp(LUA_REGISTRYINDEX, s.as_ptr());
+        Self { state: s, nres: 0 }
     }
 
     pub fn with_fn(s: &State, i: Index) -> Self {
@@ -164,13 +220,29 @@ impl Coroutine {
         s.xmove(&result, 1);
         result
     }
+
+    pub fn resume<'a, A: ToLuaMulti, R: FromLuaMulti<'a>>(
+        &'a mut self,
+        args: A,
+    ) -> Result<R, Error> {
+        // FIXME: args are maybe located in the stack will be poped
+        self.pop(self.nres);
+        match self.state.resume(None, self.pushx(args), &mut self.nres) {
+            ThreadStatus::Ok | ThreadStatus::Yield => {
+                let fidx = self.get_top() - self.nres;
+                self.set_top(fidx + R::COUNT as i32);
+                self.nres = R::COUNT as i32;
+                R::from_lua(self, self.abs_index(-(R::COUNT as i32))).ok_or(Error::ConvertFailed)
+            }
+            err => Err(self.to_error(err).unwrap_err()),
+        }
+    }
 }
 
 impl FromLua<'_> for Coroutine {
     fn from_lua(s: &State, i: Index) -> Option<Self> {
         match s.type_of(i) {
-            // maybe cause data race to self.0: lua_State*
-            // Type::Thread => s.to_thread(i).map(|x| Self(x)),
+            Type::Thread => s.to_thread(i).map(Self::new),
             Type::Function => Self::with_fn(s, i).into(),
             _ => None,
         }

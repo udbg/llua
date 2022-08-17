@@ -22,7 +22,7 @@ impl State {
     }
 
     pub fn init_llua_global(&self) {
-        let s = self.balance();
+        let s = ScopeState::from(self);
         let g = s.global();
 
         g.setf(cstr!("__llua_psize"), core::mem::size_of::<usize>());

@@ -1,8 +1,7 @@
 #![cfg(feature = "vendored")]
 
-use crate::*;
-
-use alloc::rc::Rc;
+use llua::*;
+use std::rc::Rc;
 
 struct Test {
     a: i32,
@@ -22,7 +21,10 @@ impl UserData for Test {
     }
 }
 
-impl UserData for Rc<Test> {
+#[derive(derive_more::Deref, Clone)]
+struct RcTest(Rc<Test>);
+
+impl UserData for RcTest {
     fn key_to_cache(&self) -> *const () {
         self.as_ref() as *const _ as _
     }
@@ -34,7 +36,7 @@ impl UserData for Rc<Test> {
 
 #[test]
 fn userdata() {
-    let s = State::new();
+    let s = Lua::new();
     s.open_base();
     s.push(Test { a: 0 });
     let uv = s.val(-1);
@@ -55,15 +57,15 @@ fn userdata() {
 
     s.do_string("assert(test() == 0x11223344)").unwrap();
 
-    s.do_string("print(getmetatable(uv), type(uv))");
+    s.do_string("print(getmetatable(uv), type(uv))").unwrap();
     s.do_string("assert(uv.a == 0)").unwrap();
     s.do_string("uv:inc(); assert(uv.a == 1)").unwrap();
     s.do_string("uv.a = 3; assert(uv.a == 3)").unwrap();
 
-    let test = Rc::new(Test { a: 123 });
+    let test = RcTest(Test { a: 123 }.into());
     s.global().set("uv", test.clone());
     s.global().set("uv1", test.clone());
-    s.do_string("print(uv, uv1)");
+    s.do_string("print(uv, uv1)").unwrap();
     s.do_string("assert(uv == uv1)").unwrap();
     s.do_string("assert(uv.a == 123)").unwrap();
 }
@@ -79,7 +81,7 @@ fn serde() {
         flt: f64,
     }
 
-    let s = State::new();
+    let s = Lua::new();
     s.open_base();
     let global = s.global();
     let test = Test {
@@ -100,7 +102,7 @@ fn serde() {
 
 #[test]
 fn binding() {
-    let s = State::new();
+    let s = Lua::new();
     s.open_libs();
     s.init_llua_global();
 
@@ -123,7 +125,7 @@ extern "C" fn llua_open_libs(_: &State) {}
 #[cfg(feature = "regex")]
 #[test]
 fn regex_binding() {
-    let s = State::new();
+    let s = Lua::new();
     s.open_libs();
     s.init_llua_global();
 
@@ -141,7 +143,7 @@ fn regex_binding() {
 #[cfg(feature = "thread")]
 #[test]
 fn test_thread() {
-    let s = State::new();
+    let s = Lua::new();
     s.open_libs();
     s.init_llua_global();
     s.do_file("tests/thread.lua").unwrap();

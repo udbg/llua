@@ -11,18 +11,6 @@ impl UserData for TaskWrapper<'_> {
 }
 
 impl State {
-    // #[inline(always)]
-    // pub async fn call_async<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
-    //     &self,
-    //     args: T,
-    // ) -> Result<R, Error> {
-    //     let co = Coroutine::with_fn(self, -1);
-    //     // TODO: Coroutine with lifetime
-    //     // TODO: FromLuaOwned
-    //     let co: &'a Coroutine = unsafe { core::mem::transmute(&co) };
-    //     co.call_async::<T, R>(args, Some(self)).await
-    // }
-
     #[inline(always)]
     pub(crate) fn yield_task<'a, RET: ToLuaMulti, F: Future<Output = RET> + 'a>(
         &'a self,
@@ -95,7 +83,7 @@ impl Coroutine {
         let top = self.get_top() - nargs;
         loop {
             let mut nres = nresult;
-            match self.resume(from, nargs, &mut nres) {
+            match self.state.resume(from, nargs, &mut nres) {
                 ThreadStatus::Yield => {
                     assert_eq!(nres, 1);
                     let task = self

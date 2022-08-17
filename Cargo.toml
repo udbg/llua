@@ -33,6 +33,7 @@ cstrptr = {version = '0.1.2', default-features = false, features = ['alloc']}
 
 [dev-dependencies]
 tokio = {version = '1.4', features = ["net", "time", "macros", "rt"]}
+llua = {path = ".", features = ['vendored', 'thread']}
 
 [build-dependencies]
 cc = '1'

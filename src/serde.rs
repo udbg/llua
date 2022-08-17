@@ -1,7 +1,7 @@
 //! [serde](https://crates.io/crates/serde) utilities for lua
 
 use super::*;
-use crate::{ffi::*, CRegVal, FromLua, State, ToLua, Type, ValRef};
+use crate::{ffi::*, CRegVal, FromLua, ToLua, Type, ValRef};
 use alloc::fmt::{self, Display};
 #[rustfmt::skip]
 use ::serde::{

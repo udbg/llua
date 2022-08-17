@@ -24,9 +24,6 @@ use alloc::string::*;
 use alloc::vec;
 use alloc::vec::Vec;
 
-pub mod binding;
-pub mod ffi;
-
 #[cfg(feature = "std")]
 #[macro_export]
 macro_rules! cstr {
@@ -64,22 +61,24 @@ pub(crate) mod str {
     }
 }
 
+pub mod binding;
+pub mod error;
+pub mod ffi;
+
 mod r#async;
 mod convert;
 #[cfg(all(feature = "thread", feature = "vendored"))]
 mod llua;
-mod lmacro;
+mod lua;
 mod luaconf;
 mod serde;
 mod state;
-#[cfg(test)]
-mod test;
 mod util;
 mod value;
 
 pub use self::serde::*;
 pub use convert::*;
-pub use lmacro::*;
+pub use lua::*;
 pub use r#async::*;
 pub use state::*;
 pub use util::*;
@@ -95,11 +94,10 @@ pub mod thread {
     unsafe impl Send for State {}
     unsafe impl Sync for State {}
 
-    pub static mut GLOBAL_LUA: LazyLock<Mutex<State>> = LazyLock::new(|| {
-        let state = State::new();
-        state.open_libs();
-        state.init_llua_global();
-        state.into()
+    pub static mut GLOBAL_LUA: LazyLock<Mutex<Lua>> = LazyLock::new(|| {
+        let lua = Lua::with_open_libs();
+        lua.init_llua_global();
+        lua.into()
     });
 
     #[derive(derive_more::Deref)]
@@ -116,7 +114,7 @@ pub mod thread {
                     let s = GLOBAL_LUA.lock();
                     let t = s.new_thread();
                     s.push_value(-1);
-                    s.raw_set(LUA_REGISTRYINDEX);
+                    s.raw_set(ffi::LUA_REGISTRYINDEX);
                     self.0.set(t.as_ptr());
                 }
             }
@@ -130,7 +128,7 @@ pub mod thread {
                 let s = self.get();
                 s.push_thread();
                 s.push_nil();
-                s.raw_set(LUA_REGISTRYINDEX);
+                s.raw_set(ffi::LUA_REGISTRYINDEX);
             }
         }
     }
@@ -141,41 +139,5 @@ pub mod thread {
 
     pub fn state() -> State {
         LUA.with(TlsState::get)
-    }
-}
-
-pub mod error {
-    use alloc::boxed::Box;
-    use alloc::string::String;
-    use core::fmt::Debug;
-
-    #[derive(Debug, From)]
-    pub enum Error {
-        Runtime(String),
-        #[from(ignore)]
-        Memory(String),
-        #[from(ignore)]
-        Syntax(String),
-        #[from(ignore)]
-        Gc(String),
-        Yield,
-        #[from(ignore)]
-        Convert(Box<dyn Debug>),
-        ConvertFailed,
-        Else(Box<dyn Debug>),
-    }
-
-    impl Error {
-        pub fn from_debug<D: Debug + 'static>(dbg: D) -> Self {
-            Self::Else(Box::new(dbg))
-        }
-
-        pub fn convert<D: Debug + 'static>(dbg: D) -> Self {
-            Self::Convert(Box::new(dbg))
-        }
-
-        pub fn runtime<S: Into<String>>(s: S) -> Self {
-            Self::Runtime(s.into())
-        }
     }
 }

@@ -539,9 +539,9 @@ mod thread {
     impl LLuaCondVar {
         fn push_some(&self, s: &State) {
             let mut i = self.lock.lock().unwrap();
-            s.unreference(LUA_REGISTRYINDEX, (*i).into());
-            s.push_value(2);
-            *i = s.reference(LUA_REGISTRYINDEX).0;
+            let creg = s.c_reg();
+            creg.unreference((*i).into());
+            *i = creg.reference(s.val(2)).0;
         }
 
         fn wait<'a>(
@@ -556,10 +556,10 @@ mod thread {
                 if r.timed_out() {
                     return Ok(0);
                 }
-                s.raw_geti(LUA_REGISTRYINDEX, (*i) as i64);
+                s.c_reg().raw_geti((*i) as i64);
             } else {
                 let i = cvar.wait(lock.lock().unwrap())?;
-                s.raw_geti(LUA_REGISTRYINDEX, (*i) as i64);
+                s.c_reg().raw_geti((*i) as i64);
             }
             Ok(1)
         }
@@ -577,10 +577,9 @@ mod thread {
                     call_print(
                         &routine,
                         &std::format!(
-                            "<thread#{} \"{}\"> {}",
+                            "<thread#{} \"{}\"> {err:?}",
                             thread::current().id().as_u64().get(),
                             thread::current().name().unwrap_or_default(),
-                            err
                         ),
                     );
                 }

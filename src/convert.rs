@@ -1,6 +1,7 @@
 use super::*;
 use crate::error::Error;
-use crate::{ffi::*, lua_Integer as Integer, lua_Number as Number, str::*};
+use crate::ffi::{lua_Integer as Integer, lua_Number as Number, *};
+use crate::str::{CStr, CString};
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -450,16 +451,16 @@ impl<'a> ToLua for &'a [u8] {
 impl ToLua for ValRef<'_> {
     #[inline(always)]
     fn to_lua(self, s: &State) {
-        assert_eq!(s, self.state);
-        s.push_value(self.index);
+        ToLua::to_lua(&self, s)
     }
 }
 
 impl ToLua for &ValRef<'_> {
-    #[inline(always)]
     fn to_lua(self, s: &State) {
-        assert_eq!(s, self.state);
-        s.push_value(self.index);
+        self.state.push_value(self.index);
+        if self.state.as_ptr() != s.as_ptr() {
+            self.state.xmove(s, 1);
+        }
     }
 }
 
@@ -557,20 +558,6 @@ impl<'a, THIS: 'a, T: 'a, O: 'a, F: LuaFn<'a, THIS, T, O>> ToLua for RsFn<THIS, 
             s.set_metatable(-2);
         };
         s.push_cclosure(Some(F::wrapper), 1);
-    }
-}
-
-impl ToLua for fn(State) -> i32 {
-    fn to_lua(self, s: &State) {
-        unsafe extern "C" fn wrapper(l: *mut lua_State) -> c_int {
-            let state = State::from_ptr(l);
-            let fp = state.to_pointer(lua_upvalueindex(1));
-            let fp: fn(State) -> c_int = mem::transmute(fp);
-            fp(state)
-        }
-
-        s.push_light_userdata(self as usize as *mut ());
-        s.push_cclosure(Some(wrapper), 1);
     }
 }
 
@@ -682,6 +669,13 @@ impl FromLua<'_> for AnyVal {
     }
 }
 
+impl<'a> FromLua<'a> for ValRef<'a> {
+    #[inline(always)]
+    fn from_lua(s: &'a State, i: Index) -> Option<Self> {
+        Some(ValRef::new(s, i))
+    }
+}
+
 impl FromLua<'_> for String {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<String> {
@@ -725,7 +719,7 @@ impl<'a> FromLua<'a> for CRegVal<'a> {
 impl<'a> FromLua<'a> for &'a [u8] {
     #[inline(always)]
     fn from_lua(s: &State, i: Index) -> Option<&'a [u8]> {
-        let s: &'a State = unsafe { core::mem::transmute(s) };
+        let s: &'a ScopeState = unsafe { core::mem::transmute(s) };
         s.to_bytes(i).or_else(|| unsafe {
             let p = s.to_userdata(i);
             if p.is_null() {
@@ -1124,18 +1118,12 @@ impl State {
         &'a self,
         msg: CFunction,
         args: T,
-    ) -> Result<R, String> {
+    ) -> Result<R, Error> {
         let i = self.get_top();
         self.push_fn(Some(msg));
-        // FIXME:
         self.insert(i);
-        let r = match self.pcall(self.pushx(args), R::COUNT as i32, i) {
-            ThreadStatus::Ok => R::from_lua(self, self.abs_index(-(R::COUNT as i32)))
-                .ok_or("<type not match>".to_string()),
-            _ => Err(self.to_str(-1).unwrap_or("<error>").to_string()),
-        };
-        self.set_top(i - 1);
-        r
+        self.to_error(self.pcall(self.pushx(args), R::COUNT as i32, i))?;
+        R::from_lua(self, self.abs_index(-(R::COUNT as i32))).ok_or(Error::ConvertFailed)
     }
 
     // tracebacked pcall
@@ -1144,14 +1132,15 @@ impl State {
     pub fn pcall_trace<'a, T: ToLuaMulti, R: FromLuaMulti<'a>>(
         &'a self,
         args: T,
-    ) -> Result<R, String> {
+    ) -> Result<R, Error> {
         self.xpcall(Self::traceback_c, args)
     }
 
     /// Pushes the given value onto the stack.
     #[inline(always)]
-    pub fn push<T: ToLua>(&self, value: T) {
+    pub fn push<T: ToLua>(&self, value: T) -> ValRef {
         value.to_lua(self);
+        self.val(-1)
     }
 
     #[inline(always)]

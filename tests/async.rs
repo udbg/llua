@@ -2,8 +2,8 @@ use llua::*;
 
 #[tokio::test]
 async fn llua_async() {
-    let s = State::new();
-    s.open_libs();
+    let lua = Lua::with_open_libs();
+    let s = lua.state();
 
     let g = s.global();
     g.register(

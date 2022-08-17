@@ -6,6 +6,7 @@ use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::{mem, ptr, slice, str};
 use libc::{c_char, c_int, c_void, size_t};
@@ -84,12 +85,6 @@ impl ThreadStatus {
         }
     }
 
-    pub fn chk_err(self, s: &State) {
-        if self != Self::Ok {
-            panic!("{}", s.to_str(-1).unwrap_or("<error>"));
-        }
-    }
-
     pub fn check(self, s: &State, msg: &str) -> Result<(), String> {
         if self != Self::Ok {
             Err(format!("{}: {}", msg, s.to_str(-1).unwrap_or_default()))
@@ -150,21 +145,6 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Value<'a> {
-    None,
-    Nil,
-    Int(LUA_INTEGER),
-    Num(LUA_NUMBER),
-    Str(&'a str),
-    Bool(bool),
-    LightUserdata,
-    Table,
-    Function,
-    Userdata,
-    Thread,
-}
-
 /// Type of Lua references generated through `reference` and `unreference`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Reference(pub c_int);
@@ -214,6 +194,7 @@ bitflags::bitflags! {
     }
 }
 
+/// Wrapper for raw lua state
 #[derive(Debug, PartialEq, Eq)]
 #[repr(C)]
 pub struct State(*mut lua_State);
@@ -221,8 +202,9 @@ pub struct State(*mut lua_State);
 impl State {
     /// Initializes a new Lua state. This function does not open any libraries
     /// by default. Calls `lua_newstate` internally.
-    pub fn new() -> State {
-        unsafe { State(luaL_newstate()) }
+    pub(crate) fn new() -> State {
+        let l = unsafe { luaL_newstate() };
+        Self(l)
     }
 
     /// Constructs a wrapper `State` from a raw pointer. This is suitable for use
@@ -329,7 +311,7 @@ impl State {
     //===========================================================================
     /// Maps to `lua_close`.
     #[inline(always)]
-    pub fn close(self) {
+    pub(crate) fn close(&self) {
         unsafe {
             lua_close(self.0);
         }
@@ -373,19 +355,20 @@ impl State {
 
     /// Maps to `lua_settop`.
     #[inline(always)]
-    pub fn set_top(&self, index: Index) {
+    pub(crate) fn set_top(&self, index: Index) {
         unsafe { lua_settop(self.0, index) }
     }
 
     /// Maps to `lua_pushvalue`.
     #[inline(always)]
-    pub fn push_value(&self, index: Index) {
+    pub fn push_value(&self, index: Index) -> ValRef {
         unsafe { lua_pushvalue(self.0, index) }
+        self.val(-1)
     }
 
     /// Maps to `lua_rotate`.
     #[inline(always)]
-    pub fn rotate(&self, idx: Index, n: c_int) {
+    pub(crate) fn rotate(&self, idx: Index, n: c_int) {
         unsafe { lua_rotate(self.0, idx, n) }
     }
 
@@ -404,7 +387,7 @@ impl State {
 
     /// Maps to `lua_xmove`.
     #[inline(always)]
-    pub fn xmove(&self, to: &State, n: c_int) {
+    pub(crate) fn xmove(&self, to: &State, n: c_int) {
         unsafe { lua_xmove(self.0, to.0, n) }
     }
 
@@ -811,7 +794,12 @@ impl State {
     // Coroutine functions
     //===========================================================================
     /// Maps to `lua_resume`.
-    pub fn resume(&self, from: Option<&State>, nargs: c_int, nresults: &mut c_int) -> ThreadStatus {
+    pub(crate) fn resume(
+        &self,
+        from: Option<&State>,
+        nargs: c_int,
+        nresults: &mut c_int,
+    ) -> ThreadStatus {
         let from_ptr = from.map(|s| s.0).unwrap_or(ptr::null_mut());
         let result = unsafe { lua_resume(self.0, from_ptr, nargs, nresults) };
         ThreadStatus::from_c_int(result)
@@ -927,7 +915,7 @@ impl State {
 
     /// Maps to `lua_pop`.
     #[inline(always)]
-    pub fn pop(&self, n: c_int) {
+    pub(crate) fn pop(&self, n: c_int) {
         unsafe { lua_pop(self.0, n) }
     }
 
@@ -1008,19 +996,19 @@ impl State {
 
     /// Maps to `lua_insert`.
     #[inline(always)]
-    pub fn insert(&self, idx: Index) {
+    pub(crate) fn insert(&self, idx: Index) {
         unsafe { lua_insert(self.0, idx) }
     }
 
     /// Maps to `lua_remove`.
     #[inline(always)]
-    pub fn remove(&self, idx: Index) {
+    pub(crate) fn remove(&self, idx: Index) {
         unsafe { lua_remove(self.0, idx) }
     }
 
     /// Maps to `lua_replace`.
     #[inline(always)]
-    pub fn replace(&self, idx: Index) {
+    pub(crate) fn replace(&self, idx: Index) {
         unsafe { lua_replace(self.0, idx) }
     }
 
@@ -1358,7 +1346,7 @@ impl State {
         self.to_error(ThreadStatus::from_c_int(result))
     }
 
-    fn to_error(&self, ts: ThreadStatus) -> Result<(), Error> {
+    pub fn to_error(&self, ts: ThreadStatus) -> Result<(), Error> {
         match ts {
             ThreadStatus::Ok => Ok(()),
             ThreadStatus::Yield => Err(Error::Yield),
@@ -1523,11 +1511,6 @@ impl State {
     //===========================================================================
     // Wrapper functions
     //===========================================================================
-    #[inline(always)]
-    pub fn val(&self, i: Index) -> ValRef {
-        ValRef::new(self, i)
-    }
-
     /// [-0, +0, -]
     #[inline(always)]
     pub fn upval(&self, i: Index) -> ValRef {
@@ -1540,18 +1523,23 @@ impl State {
         self.val(LUA_REGISTRYINDEX)
     }
 
+    #[inline(always)]
+    pub fn table(&self, narr: c_int, nrec: c_int) -> ValRef {
+        self.create_table(narr, nrec);
+        self.val(-1)
+    }
+
+    #[inline(always)]
+    pub fn val(&self, i: Index) -> ValRef {
+        ValRef::new(self, i)
+    }
+
     /// [-0, +1, -]
     #[inline(always)]
     pub fn global(&self) -> ValRef {
         unsafe {
             lua_rawgeti(self.0, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
         }
-        self.val(-1)
-    }
-
-    #[inline(always)]
-    pub fn table(&self, narr: c_int, nrec: c_int) -> ValRef {
-        self.create_table(narr, nrec);
         self.val(-1)
     }
 
@@ -1689,7 +1677,7 @@ impl State {
     }
 
     /// [-1, +1, -]
-    pub fn trace_error(&self, s: Option<&State>) -> &str {
+    pub fn trace_error(&self, s: Option<&Self>) -> &str {
         let err = self.to_str(-1).unwrap_or("");
         self.pop(1);
         unsafe {
@@ -1705,11 +1693,6 @@ impl State {
         let result = callback(self);
         self.set_top(top);
         result
-    }
-
-    #[inline(always)]
-    pub fn balance(&self) -> BalanceState {
-        BalanceState::new(self)
     }
 
     #[inline(always)]
@@ -1737,48 +1720,41 @@ impl State {
         luaL_traceback(l, l, s.to_string(1), 1);
         1
     }
-
-    pub fn value(&self, i: Index) -> Value {
-        match unsafe { lua_type(self.0, i) } {
-            LUA_TNONE => Value::None,
-            LUA_TNIL => Value::Nil,
-            LUA_TNUMBER => {
-                if self.is_integer(i) {
-                    Value::Int(self.to_integer(i))
-                } else {
-                    Value::Num(self.to_number(i))
-                }
-            }
-            LUA_TSTRING => Value::Str(self.to_str(i).unwrap()),
-            LUA_TBOOLEAN => Value::Bool(self.to_bool(i)),
-            LUA_TLIGHTUSERDATA => Value::LightUserdata,
-            LUA_TTABLE => Value::Table,
-            LUA_TFUNCTION => Value::Function,
-            LUA_TUSERDATA => Value::Userdata,
-            LUA_TTHREAD => Value::Thread,
-            _ => panic!(""),
-        }
-    }
 }
 
-#[derive(Deref)]
-pub struct BalanceState<'a> {
+/// Safe wrapper for operation to lua_state
+/// * it should not expose interface to operate the stack directly
+/// * the lifetime of ScopeState should be equivalent to the Lua VM
+#[derive(Debug, Deref)]
+pub struct ScopeState<'a> {
     #[deref]
-    state: &'a State,
-    pub top: i32,
+    state: State,
+    top: i32,
+    _ph: PhantomData<&'a State>,
 }
 
-impl<'a> BalanceState<'a> {
-    pub fn new(state: &'a State) -> Self {
+impl<'a> From<&State> for ScopeState<'a> {
+    fn from(s: &State) -> Self {
         Self {
-            state,
-            top: state.get_top(),
+            state: unsafe { s.copy_state() },
+            top: s.get_top(),
+            _ph: PhantomData,
         }
     }
 }
 
-impl Drop for BalanceState<'_> {
+impl<'a> ScopeState<'a> {
+    pub fn top(&self) -> i32 {
+        self.top
+    }
+
+    pub fn lua_state(&self) -> &State {
+        &self.state
+    }
+}
+
+impl Drop for ScopeState<'_> {
     fn drop(&mut self) {
-        self.set_top(self.top);
+        self.state.set_top(self.top);
     }
 }

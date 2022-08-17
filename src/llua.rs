@@ -4,11 +4,12 @@ use parking_lot::{lock_api::RawMutex, Mutex};
 #[repr(C)]
 pub struct Extra {
     mutex: Mutex<()>,
+    pub(crate) lua: *const LuaInner,
 }
 
 #[inline(always)]
-pub fn get_extra(l: *mut lua_State) -> &'static mut Extra {
-    unsafe { *core::mem::transmute::<_, *mut &'static mut Extra>(lua_getextraspace(l)) }
+pub fn get_extra<'a>(l: *mut lua_State) -> &'a mut Extra {
+    unsafe { *core::mem::transmute::<_, *mut &mut Extra>(lua_getextraspace(l)) }
 }
 
 #[no_mangle]
@@ -26,6 +27,7 @@ unsafe extern "C" fn llua_unlock(l: *mut lua_State) {
 unsafe extern "C" fn llua_userstateopen(l: *mut lua_State) {
     let extra = Box::new(Extra {
         mutex: Mutex::new(()),
+        lua: core::ptr::null(),
     });
     *core::mem::transmute::<_, *mut *mut Extra>(lua_getextraspace(l)) = Box::into_raw(extra);
 }
@@ -33,5 +35,6 @@ unsafe extern "C" fn llua_userstateopen(l: *mut lua_State) {
 #[no_mangle]
 unsafe extern "C" fn llua_userstateclose(l: *mut lua_State) {
     let e = get_extra(l);
-    Box::from_raw(e);
+    e.lua = core::ptr::null();
+    drop(Box::from_raw(e));
 }
