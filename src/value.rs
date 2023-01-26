@@ -146,6 +146,12 @@ impl<'a> ValRef<'a> {
         self.state.pop(1);
         res
     }
+
+    #[inline(always)]
+    pub fn pcall<T: ToLuaMulti, R: FromLuaMulti<'a>>(&self, args: T) -> Result<R, Error> {
+        self.state.push_value(self.index);
+        self.state.pcall_trace(args)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -67,8 +67,6 @@ pub mod ffi;
 
 mod r#async;
 mod convert;
-#[cfg(all(feature = "thread", feature = "vendored"))]
-mod llua;
 mod lua;
 mod luaconf;
 mod serde;
@@ -85,59 +83,4 @@ pub use util::*;
 pub use value::*;
 
 #[cfg(feature = "thread")]
-pub mod thread {
-    use super::{ffi::lua_State, *};
-    use core::cell::Cell;
-    use parking_lot::Mutex;
-    use std::sync::LazyLock;
-
-    unsafe impl Send for State {}
-    unsafe impl Sync for State {}
-
-    pub static mut GLOBAL_LUA: LazyLock<Mutex<Lua>> = LazyLock::new(|| {
-        let lua = Lua::with_open_libs();
-        lua.init_llua_global();
-        lua.into()
-    });
-
-    #[derive(derive_more::Deref)]
-    pub struct TlsState(Cell<*mut lua_State>);
-
-    impl TlsState {
-        fn new() -> TlsState {
-            Self(Cell::new(core::ptr::null_mut()))
-        }
-
-        fn get(&self) -> State {
-            if self.0.get().is_null() {
-                unsafe {
-                    let s = GLOBAL_LUA.lock();
-                    let t = s.new_thread();
-                    s.push_value(-1);
-                    s.raw_set(ffi::LUA_REGISTRYINDEX);
-                    self.0.set(t.as_ptr());
-                }
-            }
-            unsafe { State::from_ptr(self.0.get()) }
-        }
-    }
-
-    impl Drop for TlsState {
-        fn drop(&mut self) {
-            if !self.0.get().is_null() {
-                let s = self.get();
-                s.push_thread();
-                s.push_nil();
-                s.raw_set(ffi::LUA_REGISTRYINDEX);
-            }
-        }
-    }
-
-    std::thread_local! {
-        static LUA: TlsState = TlsState::new();
-    }
-
-    pub fn state() -> State {
-        LUA.with(TlsState::get)
-    }
-}
+pub mod thread;
