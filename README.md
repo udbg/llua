@@ -1,4 +1,8 @@
 
+**Deprecated**, please use [ezlua](https://crates.io/crates/ezlua) instead
+
+--------------
+
 llua is a rust binding for lua(5.4), which provides some lower-layer API
 
 ## Features
